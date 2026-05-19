@@ -1,6 +1,23 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+import { getStorage, ref, uploadString, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyB4pJZmXY4Rq2ZCHXTJeQo5xmfJpGW9dm4",
+    authDomain: "ai-closet-d7dd5.firebaseapp.com",
+    projectId: "ai-closet-d7dd5",
+    storageBucket: "ai-closet-d7dd5.firebasestorage.app",
+    messagingSenderId: "251201592970",
+    appId: "1:251201592970:web:6b7de7fab25339a1c29773"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
 const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.googleusercontent.com";
 let googleTokenClient;
-let isCalendarConnected = false;
+let isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
 let userCalendarEvent = null;
 
 const mockData = {
@@ -22,11 +39,9 @@ const mockData = {
     }
 };
 
-let closetItems = [
-    { id: 1, image: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=300&q=80", category: "トップス", color: "白", season: "春", style: "カジュアル", memo: "" },
-    { id: 2, image: "https://images.unsplash.com/photo-1542272604-787c3835535d?auto=format&fit=crop&w=300&q=80", category: "ボトムス", color: "ブルー", season: "オールシーズン", style: "カジュアル", memo: "" },
-    { id: 3, image: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=300&q=80", category: "アウター", color: "黒", season: "秋", style: "大人っぽい", memo: "" }
-];
+let closetItems = [];
+let wearHistory = [];
+let isDataLoaded = false;
 
 let currentRoute = '';
 let isEditMode = false;
@@ -44,6 +59,31 @@ const fabAdd = document.getElementById('fab-add');
 const modalContainer = document.getElementById('modal-container');
 const nativeCameraInput = document.getElementById('native-camera-input');
 
+// Firebaseからデータを取得
+async function fetchFirebaseData() {
+    if(isDataLoaded) return;
+    try {
+        const qCloset = query(collection(db, "closetItems"), orderBy("createdAt", "desc"));
+        const snapshot = await getDocs(qCloset);
+        closetItems = [];
+        snapshot.forEach((doc) => {
+            closetItems.push({ id: doc.id, ...doc.data() });
+        });
+        
+        const qHistory = query(collection(db, "history"), orderBy("createdAt", "desc"));
+        const snapHistory = await getDocs(qHistory);
+        wearHistory = [];
+        snapHistory.forEach((doc) => {
+            wearHistory.push({ id: doc.id, ...doc.data() });
+        });
+        
+        isDataLoaded = true;
+        if(currentRoute === 'closet' || currentRoute === 'history') navigate(currentRoute);
+    } catch (e) {
+        console.error("Firebase読み込みエラー:", e);
+    }
+}
+
 function initGoogleAuth() {
     if (window.google) {
         googleTokenClient = google.accounts.oauth2.initTokenClient({
@@ -52,7 +92,7 @@ function initGoogleAuth() {
             callback: async (tokenResponse) => {
                 if (tokenResponse && tokenResponse.access_token) {
                     isCalendarConnected = true;
-                    // カレンダー予定取得
+                    localStorage.setItem('google_calendar_connected', 'true');
                     try {
                         const timeMin = new Date().toISOString();
                         const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&maxResults=1&singleEvents=true&orderBy=startTime`, {
@@ -190,6 +230,9 @@ const routes = {
             </div>
         `,
         render: () => {
+            if(!isDataLoaded) {
+                return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
+            }
             const filtered = getFilteredItems();
             let html = '';
             
@@ -203,7 +246,7 @@ const routes = {
             } else {
                 html += `<div class="closet-grid">
                     ${filtered.map(item => `
-                        <div class="closet-item" data-id="${item.id}" onclick="handleClosetItemClick(${item.id})">
+                        <div class="closet-item" data-id="${item.id}" onclick="handleClosetItemClick('${item.id}')">
                             <img src="${item.image}">
                             <div class="item-tags">
                                 <span class="tag-small">${item.category}</span>
@@ -224,7 +267,30 @@ const routes = {
     history: {
         title: "着用履歴",
         showFab: false,
-        render: () => `<div class="card"><h3 class="section-title">今週の履歴</h3><p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。</p></div>`
+        render: () => {
+            if(!isDataLoaded) {
+                return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
+            }
+            let html = `<div class="card"><h3 class="section-title">これまでの履歴</h3>`;
+            if (wearHistory.length === 0) {
+                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面の「今日着た！」ボタンを押すとここに記録されます。</p>`;
+            } else {
+                html += `<div style="display:flex; flex-direction:column; gap:16px;">`;
+                wearHistory.forEach(h => {
+                    html += `
+                    <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px;">
+                        <img src="${h.image}" style="width:80px; height:80px; border-radius:8px; object-fit:cover;">
+                        <div>
+                            <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
+                            <p style="font-size:0.9rem; font-weight:bold; margin-top:4px;">${h.title}</p>
+                        </div>
+                    </div>`;
+                });
+                html += `</div>`;
+            }
+            html += `</div>`;
+            return html;
+        }
     },
     settings: {
         title: "設定",
@@ -253,6 +319,7 @@ const routes = {
                     <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">予定情報を取得してコーデ提案に反映します。</p>
                 `}
             </div>
+            <p style="text-align:center; margin-top:24px; font-size:0.8rem; color:var(--primary-color); font-weight:bold;"><i data-lucide="cloud" class="inline-icon"></i> Firebase 同期中</p>
         `
     }
 };
@@ -270,7 +337,8 @@ function navigate(route) {
     headerActions.innerHTML = view.headerAction || '';
     
     if(route === 'closet') {
-        document.getElementById('btn-edit-closet').addEventListener('click', toggleEditMode);
+        const btn = document.getElementById('btn-edit-closet');
+        if(btn) btn.addEventListener('click', toggleEditMode);
     }
     
     mainContent.style.opacity = '0';
@@ -284,7 +352,28 @@ function navigate(route) {
     }, 150);
 }
 
-// 提案コーデの詳細
+// 着用履歴への登録
+window.saveToHistory = async function(type) {
+    const outfit = type === 'today' ? mockData.todayOutfit : mockData.tomorrowOutfit;
+    closeModal();
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('ja-JP', {month: 'long', day: 'numeric'}) + " 着用";
+    
+    try {
+        const docRef = await addDoc(collection(db, "history"), {
+            title: outfit.title,
+            image: outfit.image,
+            dateStr: dateStr,
+            createdAt: now.getTime()
+        });
+        wearHistory.unshift({ id: docRef.id, title: outfit.title, image: outfit.image, dateStr: dateStr, createdAt: now.getTime() });
+        alert("履歴に保存しました！");
+    } catch (e) {
+        alert("履歴の保存に失敗しました。");
+        console.error(e);
+    }
+}
+
 window.openOutfitDetails = function(type) {
     const outfit = type === 'today' ? mockData.todayOutfit : mockData.tomorrowOutfit;
     modalContainer.innerHTML = `
@@ -299,6 +388,9 @@ window.openOutfitDetails = function(type) {
                 <i data-lucide="sparkles" class="inline-icon" style="color:var(--accent-color);"></i>
                 ${outfit.reason}
             </p>
+            <button onclick="saveToHistory('${type}')" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
+                今日着た！履歴に残す
+            </button>
             <button id="close-modal" class="btn-outline text-center">閉じる</button>
         </div>
     `;
@@ -308,7 +400,7 @@ window.openOutfitDetails = function(type) {
     document.getElementById('close-modal').addEventListener('click', closeModal);
 }
 
-// クローゼット操作ロジック
+// クローゼット操作
 window.handleClosetItemClick = function(id) {
     if(isEditMode) {
         const el = document.querySelector(`.closet-item[data-id="${id}"]`);
@@ -338,12 +430,27 @@ window.toggleEditMode = function() {
     else document.getElementById('floating-delete-bar').classList.add('hidden');
 }
 
-window.deleteSelected = function() {
+window.deleteSelected = async function() {
     if(selectedItems.size === 0) return;
     if(confirm(`選択した${selectedItems.size}件を削除しますか？`)) {
-        closetItems = closetItems.filter(item => !selectedItems.has(item.id));
-        toggleEditMode();
-        navigate('closet');
+        try {
+            for (let id of selectedItems) {
+                const item = closetItems.find(i => i.id === id);
+                // Firebaseから削除
+                await deleteDoc(doc(db, "closetItems", id));
+                // Storageから画像削除 (プロトタイプなのでエラーは無視して進める)
+                try {
+                    const imgRef = ref(storage, item.image);
+                    await deleteObject(imgRef);
+                } catch(e) {}
+            }
+            closetItems = closetItems.filter(item => !selectedItems.has(item.id));
+            toggleEditMode();
+            navigate('closet');
+        } catch(e) {
+            alert("削除に失敗しました。");
+            console.error(e);
+        }
     }
 }
 
@@ -363,7 +470,7 @@ window.openItemDetails = function(id) {
             </div>
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
             
-            <button onclick="openEditForm(${item.id})" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
+            <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
             <button id="close-modal" class="btn-outline text-center">閉じる</button>
         </div>
     `;
@@ -372,7 +479,7 @@ window.openItemDetails = function(id) {
     document.getElementById('close-modal').addEventListener('click', closeModal);
 }
 
-// フィルターロジック
+// フィルター
 window.openFilterModal = function() {
     const renderBtns = (group, options) => options.map(opt => 
         `<button class="filter-btn ${activeFilters[group].includes(opt) ? 'active' : ''}" onclick="toggleFilter('${group}', '${opt}', this)">${opt}</button>`
@@ -392,7 +499,6 @@ window.openFilterModal = function() {
     modalContainer.classList.remove('hidden');
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 }
-
 window.toggleFilter = function(group, val, btnEl) {
     const arr = activeFilters[group];
     if(arr.includes(val)) { arr.splice(arr.indexOf(val), 1); btnEl.classList.remove('active'); }
@@ -400,7 +506,6 @@ window.toggleFilter = function(group, val, btnEl) {
 }
 window.applyFilters = function() { closeModal(); navigate('closet'); }
 window.clearFilters = function() { activeFilters = {category:[], season:[], style:[]}; closeModal(); navigate('closet'); }
-
 function getFilteredItems() {
     return closetItems.filter(item => {
         if(activeFilters.category.length > 0 && !activeFilters.category.includes(item.category)) return false;
@@ -413,7 +518,7 @@ function getFilteredItems() {
     });
 }
 
-// 着せ替え検証ロジック
+// 着せ替え
 window.openCoordPicker = function(slot) {
     currentTargetSlot = slot;
     const items = closetItems.filter(i => slot === 'トップス' ? ['トップス','アウター'].includes(i.category) : ['ボトムス','シューズ'].includes(i.category));
@@ -422,7 +527,7 @@ window.openCoordPicker = function(slot) {
         <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
             <h3 class="section-title">${slot}を選択</h3>
             <div class="closet-grid">
-                ${items.map(item => `<div class="closet-item" onclick="selectForCoord(${item.id})"><img src="${item.image}"></div>`).join('')}
+                ${items.map(item => `<div class="closet-item" onclick="selectForCoord('${item.id}')"><img src="${item.image}"></div>`).join('')}
             </div>
             <button id="close-modal" class="btn-outline text-center mt-4">キャンセル</button>
         </div>
@@ -455,7 +560,7 @@ window.analyzeCoordination = function() {
     }, 1500);
 }
 
-// ＋ボタン押下〜新規登録フロー
+// ＋ボタン押下
 fabAdd.addEventListener('click', () => {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
@@ -564,7 +669,7 @@ window.openEditForm = function(existingId = null, presetData = null) {
             <div class="form-group"><label>メモ</label><input type="text" id="input-memo" class="input-field" placeholder="例：ユニクロ 2023年モデル" value="${item.memo}"></div>
             
             <button id="btn-save-item" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
-                ${isNew ? 'クローゼットに登録' : '変更を保存'}
+                ${isNew ? 'クラウドに保存' : '変更を保存'}
             </button>
             <button id="btn-cancel-item" class="btn-outline text-center">キャンセル</button>
         </div>
@@ -572,21 +677,55 @@ window.openEditForm = function(existingId = null, presetData = null) {
     lucide.createIcons();
     
     document.getElementById('btn-cancel-item').addEventListener('click', closeModal);
-    document.getElementById('btn-save-item').addEventListener('click', () => {
+    document.getElementById('btn-save-item').addEventListener('click', async () => {
+        const btnSave = document.getElementById('btn-save-item');
+        btnSave.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> 保存中...`;
+        btnSave.disabled = true;
+        lucide.createIcons();
+
         currentEditData.color = document.getElementById('input-color').value || '未設定';
         currentEditData.memo = document.getElementById('input-memo').value || '';
         
-        if (isNew) {
-            closetItems.push({ id: Date.now(), ...currentEditData });
-            nativeCameraInput.value = '';
-        } else {
-            const target = closetItems.find(i => i.id === existingId);
-            Object.assign(target, currentEditData);
+        try {
+            if (isNew) {
+                // 画像をFirebase Storageにアップロード
+                const imgRef = ref(storage, 'images/' + Date.now() + '.jpg');
+                await uploadString(imgRef, currentEditData.image, 'data_url');
+                const downloadURL = await getDownloadURL(imgRef);
+                
+                // Firestoreに保存
+                const docRef = await addDoc(collection(db, "closetItems"), {
+                    image: downloadURL,
+                    category: currentEditData.category,
+                    color: currentEditData.color,
+                    style: currentEditData.style,
+                    season: currentEditData.season,
+                    memo: currentEditData.memo,
+                    createdAt: Date.now()
+                });
+                closetItems.unshift({ id: docRef.id, image: downloadURL, category: currentEditData.category, color: currentEditData.color, style: currentEditData.style, season: currentEditData.season, memo: currentEditData.memo });
+                nativeCameraInput.value = '';
+            } else {
+                const targetRef = doc(db, "closetItems", existingId);
+                await updateDoc(targetRef, {
+                    category: currentEditData.category,
+                    color: currentEditData.color,
+                    style: currentEditData.style,
+                    season: currentEditData.season,
+                    memo: currentEditData.memo
+                });
+                const target = closetItems.find(i => i.id === existingId);
+                Object.assign(target, currentEditData);
+            }
+            closeModal();
+            if(currentRoute === 'closet') { const t = currentRoute; currentRoute = ''; navigate(t); }
+            else navigate('closet');
+        } catch(e) {
+            alert("エラーが発生しました: " + e.message);
+            console.error(e);
+            btnSave.textContent = isNew ? 'クラウドに保存' : '変更を保存';
+            btnSave.disabled = false;
         }
-        
-        closeModal();
-        if(currentRoute === 'closet') { const t = currentRoute; currentRoute = ''; navigate(t); }
-        else navigate('closet');
     });
 }
 
@@ -603,11 +742,18 @@ function updateThemeButtons() {
     const btns = document.querySelectorAll('.theme-btn');
     if(btns.length > 0) { btns.forEach(b => b.classList.remove('active')); if(currentTheme === 'morning') btns[0].classList.add('active'); else if(currentTheme === 'sunset') btns[1].classList.add('active'); else if(currentTheme === 'night') btns[2].classList.add('active'); }
 }
+window.connectGoogleCalendar = function() {
+    if(!googleTokenClient) { alert("Google APIの準備中です。数秒後にお試しください。"); return; }
+    googleTokenClient.requestAccessToken();
+}
 function init() {
+    window.openEditForm = window.openEditForm; // export explicitly
     const savedTheme = localStorage.getItem('ai-closet-theme') || 'morning'; document.body.className = `theme-${savedTheme}`;
     mainContent.style.transition = 'opacity 0.15s ease';
     setTimeout(() => { initGoogleAuth(); }, 1000);
-    fetchWeather(); navigate('home');
+    fetchWeather(); 
+    fetchFirebaseData();
+    navigate('home');
     setTimeout(() => { lucide.createIcons(); }, 50);
 }
 init();
