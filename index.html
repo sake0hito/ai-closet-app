@@ -9,6 +9,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="theme-morning">
     <div id="app-container">
@@ -48,8 +50,11 @@
     <button id="fab-add" class="hidden">
         <i data-lucide="plus"></i>
     </button>
+    
+    <!-- Native Camera/File Input -->
+    <input type="file" id="native-camera-input" accept="image/*" class="hidden">
 
-    <!-- Modal Container for Adding Clothes -->
+    <!-- Modal Container -->
     <div id="modal-container" class="hidden"></div>
 
     <script src="app.js"></script>
