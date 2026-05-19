@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Closet - コーデ提案アプリ</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="theme-morning">
+    <div id="app-container">
+        <!-- Header -->
+        <header id="app-header">
+            <h1 id="header-title">ホーム</h1>
+            <div id="header-actions"></div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content">
+            <!-- 画面コンテンツがここに動的にレンダリングされます -->
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav id="bottom-nav">
+            <button class="nav-btn active" data-target="home">
+                <i data-lucide="home"></i>
+                <span>ホーム</span>
+            </button>
+            <button class="nav-btn" data-target="closet">
+                <i data-lucide="shirt"></i>
+                <span>クローゼット</span>
+            </button>
+            <button class="nav-btn" data-target="history">
+                <i data-lucide="calendar"></i>
+                <span>履歴</span>
+            </button>
+            <button class="nav-btn" data-target="settings">
+                <i data-lucide="settings"></i>
+                <span>設定</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Floating Action Button for Adding Clothes -->
+    <button id="fab-add" class="hidden">
+        <i data-lucide="plus"></i>
+    </button>
+
+    <script src="app.js"></script>
+</body>
+</html>
