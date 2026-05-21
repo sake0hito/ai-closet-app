@@ -1,5 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
-import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
 import { getStorage, ref, uploadString, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-storage.js";
 
 const firebaseConfig = {
@@ -12,8 +13,11 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
+
+let currentUser = null;
 
 const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.googleusercontent.com";
 let googleTokenClient;
@@ -58,24 +62,74 @@ const navButtons = document.querySelectorAll('.nav-btn');
 const fabAdd = document.getElementById('fab-add');
 const modalContainer = document.getElementById('modal-container');
 const nativeCameraInput = document.getElementById('native-camera-input');
+const authOverlay = document.getElementById('auth-overlay');
+const authError = document.getElementById('auth-error');
 
-// Firebaseからデータを取得
-async function fetchFirebaseData() {
-    if(isDataLoaded) return;
+// Auth State Observer
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        currentUser = user;
+        authOverlay.classList.add('hidden');
+        fetchFirebaseData();
+    } else {
+        currentUser = null;
+        isDataLoaded = false;
+        closetItems = [];
+        wearHistory = [];
+        authOverlay.classList.remove('hidden');
+    }
+});
+
+// Auth Handlers
+document.getElementById('btn-google-login').addEventListener('click', async () => {
     try {
-        const qCloset = query(collection(db, "closetItems"), orderBy("createdAt", "desc"));
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+    } catch(e) { authError.textContent = "Googleログインに失敗しました: " + e.message; }
+});
+
+document.getElementById('btn-email-register').addEventListener('click', async () => {
+    const email = document.getElementById('auth-email').value;
+    const pass = document.getElementById('auth-password').value;
+    if(!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
+    try {
+        await createUserWithEmailAndPassword(auth, email, pass);
+    } catch(e) { authError.textContent = "登録エラー: " + e.message; }
+});
+
+document.getElementById('btn-email-login').addEventListener('click', async () => {
+    const email = document.getElementById('auth-email').value;
+    const pass = document.getElementById('auth-password').value;
+    if(!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
+    try {
+        await signInWithEmailAndPassword(auth, email, pass);
+    } catch(e) { authError.textContent = "ログインエラー: " + e.message; }
+});
+
+window.logout = async function() {
+    if(confirm("ログアウトしますか？")) {
+        await signOut(auth);
+        navigate('home');
+    }
+}
+
+// Firebaseから自分専用データを取得
+async function fetchFirebaseData() {
+    if(!currentUser || isDataLoaded) return;
+    try {
+        // userIdが一致するものだけを取得
+        const qCloset = query(collection(db, "closetItems"), where("userId", "==", currentUser.uid));
         const snapshot = await getDocs(qCloset);
         closetItems = [];
-        snapshot.forEach((doc) => {
-            closetItems.push({ id: doc.id, ...doc.data() });
-        });
+        snapshot.forEach((doc) => { closetItems.push({ id: doc.id, ...doc.data() }); });
+        // JS側で降順ソート（インデックス作成エラー回避のため）
+        closetItems.sort((a,b) => b.createdAt - a.createdAt);
         
-        const qHistory = query(collection(db, "history"), orderBy("createdAt", "desc"));
+        const qHistory = query(collection(db, "history"), where("userId", "==", currentUser.uid));
         const snapHistory = await getDocs(qHistory);
         wearHistory = [];
-        snapHistory.forEach((doc) => {
-            wearHistory.push({ id: doc.id, ...doc.data() });
-        });
+        snapHistory.forEach((doc) => { wearHistory.push({ id: doc.id, ...doc.data() }); });
+        wearHistory.sort((a,b) => b.createdAt - a.createdAt);
         
         isDataLoaded = true;
         if(currentRoute === 'closet' || currentRoute === 'history') navigate(currentRoute);
@@ -313,13 +367,16 @@ const routes = {
                     </div>
                 ` : `
                     <button class="btn-google" onclick="connectGoogleCalendar()">
-                        <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G">
+                        <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
                         Googleカレンダーと連携
                     </button>
                     <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">予定情報を取得してコーデ提案に反映します。</p>
                 `}
             </div>
-            <p style="text-align:center; margin-top:24px; font-size:0.8rem; color:var(--primary-color); font-weight:bold;"><i data-lucide="cloud" class="inline-icon"></i> Firebase 同期中</p>
+            <div style="text-align:center; margin-top:32px;">
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:8px;">ログイン中のアカウント: ${currentUser ? (currentUser.email || 'Google アカウント') : ''}</p>
+                <button onclick="logout()" style="background:transparent; color:#ef4444; border:1px solid #ef4444; padding:8px 16px; border-radius:20px; font-weight:bold; cursor:pointer;">ログアウト</button>
+            </div>
         `
     }
 };
@@ -354,6 +411,7 @@ function navigate(route) {
 
 // 着用履歴への登録
 window.saveToHistory = async function(type) {
+    if(!currentUser) return;
     const outfit = type === 'today' ? mockData.todayOutfit : mockData.tomorrowOutfit;
     closeModal();
     const now = new Date();
@@ -361,12 +419,13 @@ window.saveToHistory = async function(type) {
     
     try {
         const docRef = await addDoc(collection(db, "history"), {
+            userId: currentUser.uid,
             title: outfit.title,
             image: outfit.image,
             dateStr: dateStr,
             createdAt: now.getTime()
         });
-        wearHistory.unshift({ id: docRef.id, title: outfit.title, image: outfit.image, dateStr: dateStr, createdAt: now.getTime() });
+        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title: outfit.title, image: outfit.image, dateStr: dateStr, createdAt: now.getTime() });
         alert("履歴に保存しました！");
     } catch (e) {
         alert("履歴の保存に失敗しました。");
@@ -436,9 +495,7 @@ window.deleteSelected = async function() {
         try {
             for (let id of selectedItems) {
                 const item = closetItems.find(i => i.id === id);
-                // Firebaseから削除
                 await deleteDoc(doc(db, "closetItems", id));
-                // Storageから画像削除 (プロトタイプなのでエラーは無視して進める)
                 try {
                     const imgRef = ref(storage, item.image);
                     await deleteObject(imgRef);
@@ -678,6 +735,7 @@ window.openEditForm = function(existingId = null, presetData = null) {
     
     document.getElementById('btn-cancel-item').addEventListener('click', closeModal);
     document.getElementById('btn-save-item').addEventListener('click', async () => {
+        if(!currentUser) return;
         const btnSave = document.getElementById('btn-save-item');
         btnSave.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> 保存中...`;
         btnSave.disabled = true;
@@ -688,13 +746,12 @@ window.openEditForm = function(existingId = null, presetData = null) {
         
         try {
             if (isNew) {
-                // 画像をFirebase Storageにアップロード
-                const imgRef = ref(storage, 'images/' + Date.now() + '.jpg');
+                const imgRef = ref(storage, 'images/' + currentUser.uid + '/' + Date.now() + '.jpg');
                 await uploadString(imgRef, currentEditData.image, 'data_url');
                 const downloadURL = await getDownloadURL(imgRef);
                 
-                // Firestoreに保存
                 const docRef = await addDoc(collection(db, "closetItems"), {
+                    userId: currentUser.uid,
                     image: downloadURL,
                     category: currentEditData.category,
                     color: currentEditData.color,
@@ -703,7 +760,7 @@ window.openEditForm = function(existingId = null, presetData = null) {
                     memo: currentEditData.memo,
                     createdAt: Date.now()
                 });
-                closetItems.unshift({ id: docRef.id, image: downloadURL, category: currentEditData.category, color: currentEditData.color, style: currentEditData.style, season: currentEditData.season, memo: currentEditData.memo });
+                closetItems.unshift({ id: docRef.id, userId: currentUser.uid, image: downloadURL, category: currentEditData.category, color: currentEditData.color, style: currentEditData.style, season: currentEditData.season, memo: currentEditData.memo });
                 nativeCameraInput.value = '';
             } else {
                 const targetRef = doc(db, "closetItems", existingId);
@@ -747,12 +804,11 @@ window.connectGoogleCalendar = function() {
     googleTokenClient.requestAccessToken();
 }
 function init() {
-    window.openEditForm = window.openEditForm; // export explicitly
+    window.openEditForm = window.openEditForm; 
     const savedTheme = localStorage.getItem('ai-closet-theme') || 'morning'; document.body.className = `theme-${savedTheme}`;
     mainContent.style.transition = 'opacity 0.15s ease';
     setTimeout(() => { initGoogleAuth(); }, 1000);
-    fetchWeather(); 
-    fetchFirebaseData();
+    fetchWeather();
     navigate('home');
     setTimeout(() => { lucide.createIcons(); }, 50);
 }

@@ -13,6 +13,31 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="theme-morning">
+    
+    <!-- Auth Overlay (Login/Register) -->
+    <div id="auth-overlay">
+        <div class="auth-card">
+            <h2>AI Closet</h2>
+            <p>あなた専用のクローゼットを作るために、ログインまたは登録をお願いします。</p>
+            
+            <button id="btn-google-login" class="auth-btn-google">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
+                Googleでログイン / 登録
+            </button>
+            
+            <hr>
+            <p style="margin-bottom:8px;">またはメールアドレスで登録</p>
+            
+            <input type="email" id="auth-email" placeholder="メールアドレス">
+            <input type="password" id="auth-password" placeholder="パスワード (6文字以上)">
+            
+            <button id="btn-email-login" class="auth-btn-primary">ログイン</button>
+            <button id="btn-email-register" class="auth-btn-secondary">新規登録</button>
+            
+            <div id="auth-error" style="color: #ef4444; font-size: 0.8rem; margin-top: 12px; min-height: 1.2rem;"></div>
+        </div>
+    </div>
+
     <div id="app-container">
         <!-- Header -->
         <header id="app-header">
