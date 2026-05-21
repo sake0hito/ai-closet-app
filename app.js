@@ -22,26 +22,34 @@ let currentUser = null;
 const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.googleusercontent.com";
 let googleTokenClient;
 let isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
-let userCalendarEvent = null;
+let calendarEvents = {}; // { "YYYY-MM-DD": "Event summary" }
 
-const mockData = {
-    weather: { 
-        today: { temp: "取得中...", condition: "取得中...", icon: "loader", location: "東京都" },
-        tomorrow: { temp: "--°C", condition: "--", icon: "loader" }
-    },
-    todayOutfit: {
-        title: "今日のAI提案コーデ",
-        image: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80",
-        tags: ["カジュアル", "春", "動きやすい"],
-        reason: "今日の気温に合わせて、通気性の良いシャツとデニムの組み合わせが最適です。"
-    },
-    tomorrowOutfit: {
-        title: "明日のAI提案コーデ",
-        image: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=400&q=80",
-        tags: ["大人っぽい", "秋", "スマート"],
-        reason: "明日は少し冷え込む予報のため、サッと羽織れるアウターを用意しました。"
-    }
+const CATEGORIES = {
+    "トップス・アウター": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター", "カーディガン", "ジャケット"],
+    "ボトムス": ["デニム", "チノパン", "カーゴパンツ", "スラックス", "ショートパンツ", "クロップパンツ", "バミューダパンツ", "カプリパンツ", "スキニーパンツ", "サルエルパンツ", "テーパードパンツ", "ワイドパンツ", "ガウチョパンツ", "バギーパンツ", "その他のボトムス"],
+    "帽子": ["ハット", "キャップ", "ニット帽", "その他の帽子"],
+    "靴": ["スニーカー", "革靴", "ブーツ", "サンダル", "パンプス", "フラットシューズ"],
+    "ワンピース": [],
+    "ドレス": [],
+    "スーツ": []
 };
+const COLORS = ["赤", "青", "黄", "緑", "むらさき", "ピンク", "オレンジ", "ベージュ", "グレー", "黒", "白"];
+const STYLES = ["カジュアル系", "きれいめ（シンプル）系", "エレガント系", "クール系", "フォーマル系", "ストリート系", "フェミニン・ガーリー系", "アウトドア系", "アメカジ系"];
+const SEASONS = ["春", "夏", "秋", "冬", "オールシーズン"];
+
+let weeklyOutfits = Array(7).fill().map((_, i) => {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    return {
+        dateObj: d,
+        dateStr: d.toLocaleDateString('ja-JP', {month:'short', day:'numeric', weekday:'short'}),
+        isoDate: d.toISOString().split('T')[0],
+        temp: "--°C", condition: "--", icon: "loader", event: null,
+        title: i === 0 ? "今日のAIコーデ" : (i === 1 ? "明日のAIコーデ" : `${d.getDate()}日のAIコーデ`),
+        image: `https://images.unsplash.com/photo-${1500000000000 + i * 100000}?auto=format&fit=crop&w=400&q=80`,
+        tags: [STYLES[Math.floor(Math.random()*STYLES.length)].replace('系',''), SEASONS[Math.floor(Math.random()*SEASONS.length)]],
+        reason: "データ取得中..."
+    };
+});
 
 let closetItems = [];
 let wearHistory = [];
@@ -50,7 +58,7 @@ let isDataLoaded = false;
 let currentRoute = '';
 let isEditMode = false;
 let selectedItems = new Set();
-let activeFilters = { category: [], season: [], style: [] };
+let activeFilters = { category: [], subCategory: [], colors: [], styles: [], seasons: [], lightness: [] };
 let coordState = { tops: null, bottoms: null };
 let currentTargetSlot = null;
 let currentEditData = {};
@@ -65,7 +73,6 @@ const nativeCameraInput = document.getElementById('native-camera-input');
 const authOverlay = document.getElementById('auth-overlay');
 const authError = document.getElementById('auth-error');
 
-// Auth State Observer
 onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
@@ -80,8 +87,8 @@ onAuthStateChanged(auth, (user) => {
     }
 });
 
-// Auth Handlers
 document.getElementById('btn-google-login').addEventListener('click', async () => {
+    authError.textContent = "";
     try {
         const provider = new GoogleAuthProvider();
         await signInWithPopup(auth, provider);
@@ -89,6 +96,7 @@ document.getElementById('btn-google-login').addEventListener('click', async () =
 });
 
 document.getElementById('btn-email-register').addEventListener('click', async () => {
+    authError.textContent = "";
     const email = document.getElementById('auth-email').value;
     const pass = document.getElementById('auth-password').value;
     if(!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
@@ -98,6 +106,7 @@ document.getElementById('btn-email-register').addEventListener('click', async ()
 });
 
 document.getElementById('btn-email-login').addEventListener('click', async () => {
+    authError.textContent = "";
     const email = document.getElementById('auth-email').value;
     const pass = document.getElementById('auth-password').value;
     if(!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
@@ -113,16 +122,13 @@ window.logout = async function() {
     }
 }
 
-// Firebaseから自分専用データを取得
 async function fetchFirebaseData() {
     if(!currentUser || isDataLoaded) return;
     try {
-        // userIdが一致するものだけを取得
         const qCloset = query(collection(db, "closetItems"), where("userId", "==", currentUser.uid));
         const snapshot = await getDocs(qCloset);
         closetItems = [];
         snapshot.forEach((doc) => { closetItems.push({ id: doc.id, ...doc.data() }); });
-        // JS側で降順ソート（インデックス作成エラー回避のため）
         closetItems.sort((a,b) => b.createdAt - a.createdAt);
         
         const qHistory = query(collection(db, "history"), where("userId", "==", currentUser.uid));
@@ -138,6 +144,18 @@ async function fetchFirebaseData() {
     }
 }
 
+function updateWeeklyReasons() {
+    weeklyOutfits.forEach(outfit => {
+        let ev = calendarEvents[outfit.isoDate];
+        if(ev) {
+            outfit.reason = `予定「${ev}」と気温(${outfit.temp})に合わせて、${outfit.tags.join('・')}なコーデを提案します！`;
+        } else {
+            outfit.reason = `気温(${outfit.temp})に最適で、リラックスできる${outfit.tags.join('・')}なコーデを選びました！`;
+        }
+    });
+    if(currentRoute === 'home') navigate('home');
+}
+
 function initGoogleAuth() {
     if (window.google) {
         googleTokenClient = google.accounts.oauth2.initTokenClient({
@@ -149,19 +167,23 @@ function initGoogleAuth() {
                     localStorage.setItem('google_calendar_connected', 'true');
                     try {
                         const timeMin = new Date().toISOString();
-                        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&maxResults=1&singleEvents=true&orderBy=startTime`, {
+                        const timeMaxDate = new Date(); timeMaxDate.setDate(timeMaxDate.getDate() + 7);
+                        const timeMax = timeMaxDate.toISOString();
+                        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`, {
                             headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` }
                         });
                         const data = await res.json();
-                        if (data.items && data.items.length > 0) {
-                            userCalendarEvent = data.items[0].summary;
-                            mockData.todayOutfit.reason = `今日の予定「${userCalendarEvent}」と気温に合わせて、最適なコーデを選びました！`;
-                        } else {
-                            mockData.todayOutfit.reason = `今日は特に予定がないため、リラックスできるコーデを選びました！`;
+                        calendarEvents = {};
+                        if (data.items) {
+                            data.items.forEach(item => {
+                                const d = item.start.dateTime || item.start.date;
+                                const iso = d.split('T')[0];
+                                if(!calendarEvents[iso]) calendarEvents[iso] = item.summary;
+                            });
                         }
+                        updateWeeklyReasons();
                     } catch(e) { console.error(e); }
-                    
-                    alert("Googleカレンダーと連携し、直近の予定を取得しました！");
+                    alert("Googleカレンダーと連携し、1週間の予定を取得しました！");
                     if (currentRoute === 'settings' || currentRoute === 'home') navigate(currentRoute);
                 }
             },
@@ -182,22 +204,18 @@ async function fetchWeather() {
             return { c: "晴れ", i: "sun" };
         };
         
-        const cw = parseWeather(data.current_weather.weathercode);
-        mockData.weather.today.temp = `${Math.round(data.current_weather.temperature)}°C`;
-        mockData.weather.today.condition = cw.c;
-        mockData.weather.today.icon = cw.i;
-        
         if (data.daily) {
-            const tw = parseWeather(data.daily.weathercode[1]);
-            mockData.weather.tomorrow.temp = `${Math.round(data.daily.temperature_2m_max[1])}°C`;
-            mockData.weather.tomorrow.condition = tw.c;
-            mockData.weather.tomorrow.icon = tw.i;
+            weeklyOutfits.forEach((outfit, index) => {
+                if(index < data.daily.time.length) {
+                    const w = parseWeather(data.daily.weathercode[index]);
+                    outfit.temp = `${Math.round(data.daily.temperature_2m_max[index])}°C`;
+                    outfit.condition = w.c;
+                    outfit.icon = w.i;
+                }
+            });
+            updateWeeklyReasons();
         }
-        
-        if (currentRoute === 'home') navigate('home');
-    } catch (e) {
-        mockData.weather.today.temp = "--°C"; mockData.weather.today.condition = "エラー";
-    }
+    } catch (e) { console.error("Weather API error", e); }
 }
 
 setInterval(() => {
@@ -210,6 +228,21 @@ setInterval(() => {
     }
 }, 1000);
 
+// Helper for formatting tags
+function formatTags(item) {
+    let tags = [];
+    if(item.subCategory) tags.push(item.subCategory);
+    else if(item.category) tags.push(item.category);
+    
+    if(item.colors && item.colors.length > 0) tags.push(item.colors.join('・'));
+    if(item.lightness && item.lightness !== '指定なし') tags.push(item.lightness);
+    
+    if(item.styles && item.styles.length > 0) {
+        tags = tags.concat(item.styles.map(s => s.replace('系', '')));
+    }
+    return tags;
+}
+
 const routes = {
     home: {
         title: "ホーム",
@@ -219,49 +252,55 @@ const routes = {
             const timeStr = now.toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'});
             const dateStr = now.toLocaleDateString('ja-JP', {month: 'short', day: 'numeric', weekday: 'short'});
             
-            return `
+            const todayWeather = weeklyOutfits[0];
+            
+            let html = `
             <div style="text-align:center; margin-bottom:24px;">
                 <div id="realtime-clock" class="clock-widget">${timeStr}</div>
                 <div id="realtime-date" class="date-widget">${dateStr}</div>
                 <div class="weather-widget" style="justify-content:center; margin-bottom:0;">
-                    <i data-lucide="${mockData.weather.today.icon}" class="weather-icon ${mockData.weather.today.icon === 'loader' ? 'spinner' : ''}" style="width:36px; height:36px;"></i>
+                    <i data-lucide="${todayWeather.icon}" class="weather-icon ${todayWeather.icon === 'loader' ? 'spinner' : ''}" style="width:36px; height:36px;"></i>
                     <div class="weather-info" style="text-align:left;">
-                        <h2 style="font-size:1.5rem;">${mockData.weather.today.temp}</h2>
-                        <p style="margin-top:0;">${mockData.weather.today.location} / ${mockData.weather.today.condition}</p>
+                        <h2 style="font-size:1.5rem;">${todayWeather.temp}</h2>
+                        <p style="margin-top:0;">東京 / ${todayWeather.condition}</p>
                     </div>
                 </div>
             </div>
 
-            <h3 class="section-title">今日のAI提案コーデ</h3>
-            <div class="card outfit-card" onclick="openOutfitDetails('today')">
-                <img src="${mockData.todayOutfit.image}" alt="Outfit" class="outfit-image" />
-                <div class="outfit-details">
-                    <h4 class="mb-4">${mockData.todayOutfit.title}</h4>
-                    <div>${mockData.todayOutfit.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}</div>
-                    <p class="mt-4" style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
-                        <i data-lucide="sparkles" class="inline-icon" style="color: var(--accent-color); margin-right: 4px;"></i>
-                        ${mockData.todayOutfit.reason}
-                    </p>
+            <h3 class="section-title">1週間のコーデ予測</h3>
+            <div class="carousel-container">
+            `;
+            
+            weeklyOutfits.forEach((outfit, index) => {
+                html += `
+                <div class="carousel-item">
+                    <div class="card outfit-card" onclick="openOutfitDetails(${index})">
+                        <div style="padding:12px; font-weight:bold; border-bottom:1px solid rgba(0,0,0,0.05); display:flex; justify-content:space-between;">
+                            <span>${outfit.dateStr}</span>
+                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.temp}</span>
+                        </div>
+                        <img src="${outfit.image}" alt="Outfit" class="outfit-image" style="height:200px;" />
+                        <div class="outfit-details">
+                            <h4 class="mb-4">${outfit.title}</h4>
+                            <div style="display:flex; flex-wrap:wrap; gap:4px;">${outfit.tags.map(tag => `<span class="tag-small">${tag}</span>`).join('')}</div>
+                            <p class="mt-4" style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4;">
+                                <i data-lucide="sparkles" class="inline-icon" style="color: var(--accent-color);"></i>
+                                ${outfit.reason}
+                            </p>
+                        </div>
+                    </div>
                 </div>
+                `;
+            });
+            
+            html += `
             </div>
             
-            <h3 class="section-title mt-4" style="font-size:0.95rem;">明日のAI提案コーデ <span style="font-size:0.8rem; font-weight:normal; color:var(--text-secondary);"><i data-lucide="${mockData.weather.tomorrow.icon}" class="inline-icon"></i> ${mockData.weather.tomorrow.temp}</span></h3>
-            <div class="card outfit-card small" onclick="openOutfitDetails('tomorrow')">
-                <img src="${mockData.tomorrowOutfit.image}" alt="Outfit" class="outfit-image" />
-                <div class="outfit-details">
-                    <h4>${mockData.tomorrowOutfit.title}</h4>
-                    <p style="color: var(--text-secondary); line-height: 1.4;">
-                        <i data-lucide="calendar" class="inline-icon" style="color: var(--accent-color);"></i>
-                        ${mockData.tomorrowOutfit.reason}
-                    </p>
-                </div>
-            </div>
-
             <h3 class="section-title mt-4">コーデ検証ルーム（お遊び）</h3>
             <div class="card">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの衣類を組み合わせてAIの評価を聞いてみよう！枠をタップして衣類を選択してください。</p>
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの衣類を組み合わせてAIの評価を聞いてみよう！</p>
                 <div class="coord-slots">
-                    <div class="coord-slot" onclick="openCoordPicker('トップス')" id="slot-tops">
+                    <div class="coord-slot" onclick="openCoordPicker('トップス・アウター')" id="slot-tops">
                         ${coordState.tops ? `<img src="${coordState.tops.image}"><div class="coord-slot-clear" onclick="event.stopPropagation(); clearCoord('tops')">✕</div>` : 'トップス未選択'}
                     </div>
                     <div class="coord-slot" onclick="openCoordPicker('ボトムス')" id="slot-bottoms">
@@ -272,6 +311,7 @@ const routes = {
                 <div id="coord-result" class="hidden mt-4" style="background:var(--primary-light); padding:16px; border-radius:8px; font-size:0.9rem; line-height:1.5;"></div>
             </div>
             `;
+            return html;
         }
     },
     closet: {
@@ -290,23 +330,27 @@ const routes = {
             const filtered = getFilteredItems();
             let html = '';
             
-            const filterCount = activeFilters.category.length + activeFilters.season.length + activeFilters.style.length;
+            const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
             if(filterCount > 0) {
                 html += `<p style="font-size:0.8rem; color:var(--primary-color); margin-bottom:12px; font-weight:bold;">${filterCount}つのフィルター適用中</p>`;
             }
 
             if (filtered.length === 0) {
-                html += `<p class="text-center" style="color: var(--text-secondary); margin-top: 40px;"><i data-lucide="package-open" style="width: 48px; height: 48px; opacity: 0.5; margin-bottom: 16px;"></i><br>該当する衣類・履物が見つかりません。<br>右下の＋ボタンから追加してください。</p>`;
+                html += `<p class="text-center" style="color: var(--text-secondary); margin-top: 40px;"><i data-lucide="package-open" style="width: 48px; height: 48px; opacity: 0.5; margin-bottom: 16px;"></i><br>衣類が見つかりません。<br>右下の＋ボタンから追加してください。</p>`;
             } else {
                 html += `<div class="closet-grid">
-                    ${filtered.map(item => `
+                    ${filtered.map(item => {
+                        const tags = formatTags(item);
+                        return `
                         <div class="closet-item" data-id="${item.id}" onclick="handleClosetItemClick('${item.id}')">
                             <img src="${item.image}">
                             <div class="item-tags">
-                                <span class="tag-small">${item.category}</span>
+                                ${tags.slice(0,3).map(t => `<span class="tag-small">${t}</span>`).join('')}
+                                ${tags.length > 3 ? `<span class="tag-small">...</span>` : ''}
                             </div>
                         </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>`;
             }
             html += `
@@ -327,7 +371,7 @@ const routes = {
             }
             let html = `<div class="card"><h3 class="section-title">これまでの履歴</h3>`;
             if (wearHistory.length === 0) {
-                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面の「今日着た！」ボタンを押すとここに記録されます。</p>`;
+                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すと記録されます。</p>`;
             } else {
                 html += `<div style="display:flex; flex-direction:column; gap:16px;">`;
                 wearHistory.forEach(h => {
@@ -362,15 +406,14 @@ const routes = {
                 <h3 class="section-title">外部連携</h3>
                 ${isCalendarConnected ? `
                     <div style="display:flex; align-items:center; gap:8px; padding:12px; background:var(--primary-light); border-radius:8px; color:var(--primary-color);">
-                        <i data-lucide="check-circle" class="inline-icon"></i> Google連携済み
-                        ${userCalendarEvent ? `<br><span style="font-size:0.8rem; margin-left:24px;">直近の予定: ${userCalendarEvent}</span>` : ''}
+                        <i data-lucide="check-circle" class="inline-icon"></i> Googleカレンダー連携済み
                     </div>
                 ` : `
                     <button class="btn-google" onclick="connectGoogleCalendar()">
                         <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
                         Googleカレンダーと連携
                     </button>
-                    <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">予定情報を取得してコーデ提案に反映します。</p>
+                    <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">予定情報を取得して1週間のコーデ提案に反映します。</p>
                 `}
             </div>
             <div style="text-align:center; margin-top:32px;">
@@ -409,10 +452,10 @@ function navigate(route) {
     }, 150);
 }
 
-// 着用履歴への登録
-window.saveToHistory = async function(type) {
+// 着用履歴
+window.saveToHistory = async function(index) {
     if(!currentUser) return;
-    const outfit = type === 'today' ? mockData.todayOutfit : mockData.tomorrowOutfit;
+    const outfit = weeklyOutfits[index];
     closeModal();
     const now = new Date();
     const dateStr = now.toLocaleDateString('ja-JP', {month: 'long', day: 'numeric'}) + " 着用";
@@ -433,8 +476,8 @@ window.saveToHistory = async function(type) {
     }
 }
 
-window.openOutfitDetails = function(type) {
-    const outfit = type === 'today' ? mockData.todayOutfit : mockData.tomorrowOutfit;
+window.openOutfitDetails = function(index) {
+    const outfit = weeklyOutfits[index];
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
@@ -447,16 +490,15 @@ window.openOutfitDetails = function(type) {
                 <i data-lucide="sparkles" class="inline-icon" style="color:var(--accent-color);"></i>
                 ${outfit.reason}
             </p>
-            <button onclick="saveToHistory('${type}')" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
+            <button onclick="saveToHistory(${index})" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
                 今日着た！履歴に残す
             </button>
-            <button id="close-modal" class="btn-outline text-center">閉じる</button>
+            <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
         </div>
     `;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
-    document.getElementById('close-modal').addEventListener('click', closeModal);
 }
 
 // クローゼット操作
@@ -514,41 +556,39 @@ window.deleteSelected = async function() {
 window.openItemDetails = function(id) {
     const item = closetItems.find(i => i.id === id);
     if(!item) return;
+    const tags = formatTags(item);
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">詳細情報</h3>
             <img src="${item.image}" style="width:100%; height:200px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
-                <span class="tag">${item.category}</span>
-                <span class="tag">${item.color}</span>
-                <span class="tag">${item.style}</span>
-                <span class="tag">${item.season}</span>
+                ${tags.map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
             
             <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
-            <button id="close-modal" class="btn-outline text-center">閉じる</button>
+            <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
         </div>
     `;
     modalContainer.classList.remove('hidden');
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
-    document.getElementById('close-modal').addEventListener('click', closeModal);
 }
 
 // フィルター
 window.openFilterModal = function() {
-    const renderBtns = (group, options) => options.map(opt => 
-        `<button class="filter-btn ${activeFilters[group].includes(opt) ? 'active' : ''}" onclick="toggleFilter('${group}', '${opt}', this)">${opt}</button>`
+    const renderMultiBtns = (group, options) => options.map(opt => 
+        `<button class="filter-btn ${activeFilters[group].includes(opt) ? 'active' : ''}" onclick="toggleMultiFilter('${group}', '${opt}', this)">${opt}</button>`
     ).join('');
 
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">絞り込み</h3>
-            <div class="form-group"><label>カテゴリ</label><div class="filter-btn-group">${renderBtns('category', ['トップス','ボトムス','アウター','ワンピース','シューズ'])}</div></div>
-            <div class="form-group"><label>スタイル</label><div class="filter-btn-group">${renderBtns('style', ['カジュアル','大人っぽい','フォーマル','スポーティ'])}</div></div>
-            <div class="form-group"><label>季節</label><div class="filter-btn-group">${renderBtns('season', ['春','夏','秋','冬','オールシーズン'])}</div></div>
+            <div class="form-group"><label>カテゴリ</label><div class="filter-btn-group">${renderMultiBtns('category', Object.keys(CATEGORIES))}</div></div>
+            <div class="form-group"><label>カラー</label><div class="filter-btn-group">${renderMultiBtns('colors', COLORS)}</div></div>
+            <div class="form-group"><label>スタイル</label><div class="filter-btn-group">${renderMultiBtns('styles', STYLES)}</div></div>
+            <div class="form-group"><label>季節</label><div class="filter-btn-group">${renderMultiBtns('seasons', SEASONS)}</div></div>
             <button onclick="applyFilters()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">適用する</button>
             <button onclick="clearFilters()" class="btn-outline text-center text-danger">条件をクリア</button>
         </div>
@@ -556,65 +596,21 @@ window.openFilterModal = function() {
     modalContainer.classList.remove('hidden');
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 }
-window.toggleFilter = function(group, val, btnEl) {
+window.toggleMultiFilter = function(group, val, btnEl) {
     const arr = activeFilters[group];
     if(arr.includes(val)) { arr.splice(arr.indexOf(val), 1); btnEl.classList.remove('active'); }
     else { arr.push(val); btnEl.classList.add('active'); }
 }
 window.applyFilters = function() { closeModal(); navigate('closet'); }
-window.clearFilters = function() { activeFilters = {category:[], season:[], style:[]}; closeModal(); navigate('closet'); }
+window.clearFilters = function() { activeFilters = {category:[], subCategory:[], colors:[], styles:[], seasons:[], lightness:[]}; closeModal(); navigate('closet'); }
 function getFilteredItems() {
     return closetItems.filter(item => {
         if(activeFilters.category.length > 0 && !activeFilters.category.includes(item.category)) return false;
-        if(activeFilters.style.length > 0 && !activeFilters.style.includes(item.style)) return false;
-        if(activeFilters.season.length > 0) {
-            const hasMatch = activeFilters.season.some(s => item.season.includes(s));
-            if(!hasMatch) return false;
-        }
+        if(activeFilters.colors.length > 0 && !activeFilters.colors.some(c => (item.colors || []).includes(c))) return false;
+        if(activeFilters.styles.length > 0 && !activeFilters.styles.some(s => (item.styles || []).includes(s))) return false;
+        if(activeFilters.seasons.length > 0 && !activeFilters.seasons.some(s => (item.seasons || []).includes(s))) return false;
         return true;
     });
-}
-
-// 着せ替え
-window.openCoordPicker = function(slot) {
-    currentTargetSlot = slot;
-    const items = closetItems.filter(i => slot === 'トップス' ? ['トップス','アウター'].includes(i.category) : ['ボトムス','シューズ'].includes(i.category));
-    modalContainer.innerHTML = `
-        <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
-            <h3 class="section-title">${slot}を選択</h3>
-            <div class="closet-grid">
-                ${items.map(item => `<div class="closet-item" onclick="selectForCoord('${item.id}')"><img src="${item.image}"></div>`).join('')}
-            </div>
-            <button id="close-modal" class="btn-outline text-center mt-4">キャンセル</button>
-        </div>
-    `;
-    modalContainer.classList.remove('hidden');
-    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
-    document.getElementById('close-modal').addEventListener('click', closeModal);
-}
-window.selectForCoord = function(id) {
-    const item = closetItems.find(i => i.id === id);
-    if(currentTargetSlot === 'トップス') coordState.tops = item;
-    else coordState.bottoms = item;
-    closeModal(); navigate('home');
-}
-window.clearCoord = function(slotKey) { coordState[slotKey] = null; navigate('home'); }
-window.analyzeCoordination = function() {
-    const resEl = document.getElementById('coord-result');
-    if(!coordState.tops || !coordState.bottoms) {
-        resEl.innerHTML = `<span style="color:#ef4444;"><i data-lucide="alert-circle" class="inline-icon"></i> トップスとボトムスの両方を選択してください！</span>`;
-        resEl.classList.remove('hidden'); lucide.createIcons(); return;
-    }
-    resEl.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> AIが分析中...`;
-    resEl.classList.remove('hidden'); lucide.createIcons();
-    setTimeout(() => {
-        const t = coordState.tops; const b = coordState.bottoms;
-        let evaluation = "良い組み合わせですね！";
-        if(t.style === b.style) evaluation = `全身を「${t.style}」で統一した素晴らしいコーディネートです。`;
-        else evaluation = `「${t.style}」と「${b.style}」をミックスした上級者向けの着こなしです。`;
-        resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${evaluation}<br><span style="font-size:0.8rem; color:var(--text-secondary);">${t.color} × ${b.color} の色合いもバッチリです！</span>`;
-    }, 1500);
 }
 
 // ＋ボタン押下
@@ -623,20 +619,16 @@ fabAdd.addEventListener('click', () => {
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">衣類または履物を登録</h3>
-            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:16px;">
-                ※正確なAI判定のため、自動車や動物などのオブジェクトが写っていない画像をご使用ください。
-            </p>
             <div id="upload-area" class="upload-area">
                 <i data-lucide="camera" style="width: 32px; height: 32px; margin-bottom: 8px;"></i>
                 <p>タップしてカメラ撮影<br><span style="font-size: 0.8rem; opacity: 0.8;">または画像を選択</span></p>
             </div>
-            <button id="close-modal" class="btn-outline mt-4 text-center">キャンセル</button>
+            <button onclick="closeModal()" class="btn-outline mt-4 text-center">キャンセル</button>
         </div>
     `;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
-    document.getElementById('close-modal').addEventListener('click', closeModal);
     document.getElementById('upload-area').addEventListener('click', () => { closeModal(); nativeCameraInput.click(); });
 });
 
@@ -663,136 +655,184 @@ function showAIAnalysisModal() {
     lucide.createIcons();
     
     setTimeout(() => {
-        if (Math.random() < 0.2) {
-            modalContainer.innerHTML = `
-                <div class="modal-overlay"></div>
-                <div class="modal-content text-center">
-                    <i data-lucide="alert-triangle" style="width: 48px; height: 48px; color: #ef4444; margin-bottom: 16px;"></i>
-                    <h3 style="color:#ef4444; font-weight:bold; margin-bottom:8px;">登録エラー</h3>
-                    <p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:24px;">自動車や動物、風景など、衣類・履物以外のオブジェクトが検出されました。<br>衣類・履物がメインに写った画像をご使用ください。</p>
-                    <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
-                </div>
-            `;
-            lucide.createIcons();
-            return;
-        }
-        
-        const categories = ["トップス", "ボトムス", "アウター", "シューズ"];
-        const styles = ["カジュアル", "大人っぽい", "スポーティ"];
-        const seasons = ["春", "夏", "秋", "冬", "オールシーズン"];
-        const colors = ["黒", "白", "ブルー", "ベージュ"];
-        
         window.openEditForm(null, {
             image: currentUploadedImage,
-            category: categories[Math.floor(Math.random() * categories.length)],
-            style: styles[Math.floor(Math.random() * styles.length)],
-            season: seasons[Math.floor(Math.random() * seasons.length)],
-            color: colors[Math.floor(Math.random() * colors.length)],
+            category: "トップス・アウター",
+            subCategory: "Tシャツ",
+            colors: ["白"],
+            lightness: "指定なし",
+            styles: ["カジュアル系"],
+            seasons: ["夏"],
             memo: ""
         });
-    }, 2000);
+    }, 1500);
 }
 
+// フォーム編集・複数選択ロジック
 window.openEditForm = function(existingId = null, presetData = null) {
     const isNew = existingId === null;
-    const item = isNew ? presetData : closetItems.find(i => i.id === existingId);
-    currentEditData = { ...item };
+    let baseItem = isNew ? presetData : closetItems.find(i => i.id === existingId);
     
-    const renderFormBtns = (group, options) => {
-        return options.map(opt => `
-            <button type="button" class="form-btn ${currentEditData[group] === opt ? 'active' : ''}" 
-                    onclick="setFormData('${group}', '${opt}', this)">${opt}</button>
-        `).join('');
+    // データ構造のマイグレーション（古いデータ対応）
+    currentEditData = {
+        image: baseItem.image,
+        category: baseItem.category || "トップス・アウター",
+        subCategory: baseItem.subCategory || "",
+        colors: Array.isArray(baseItem.colors) ? [...baseItem.colors] : (baseItem.color ? [baseItem.color] : []),
+        lightness: baseItem.lightness || "指定なし",
+        styles: Array.isArray(baseItem.styles) ? [...baseItem.styles] : (baseItem.style ? [baseItem.style] : []),
+        seasons: Array.isArray(baseItem.seasons) ? [...baseItem.seasons] : (baseItem.season ? [baseItem.season] : []),
+        memo: baseItem.memo || ""
     };
+    
+    renderEditFormContent(isNew, existingId);
+}
+
+function renderEditFormContent(isNew, existingId) {
+    const renderSingleBtn = (group, options) => {
+        return options.map(opt => `<button type="button" class="form-btn ${currentEditData[group] === opt ? 'active' : ''}" onclick="setFormSingle('${group}', '${opt}')">${opt}</button>`).join('');
+    };
+    const renderMultiBtn = (group, options) => {
+        return options.map(opt => `<button type="button" class="form-btn ${currentEditData[group].includes(opt) ? 'active' : ''}" onclick="toggleFormMulti('${group}', '${opt}')">${opt}</button>`).join('');
+    };
+
+    let subCatHtml = '';
+    const subs = CATEGORIES[currentEditData.category];
+    if (subs && subs.length > 0) {
+        subCatHtml = `<div class="form-group"><label>種類</label><div class="form-btn-group">${renderSingleBtn('subCategory', subs)}</div></div>`;
+    }
 
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">${isNew ? '詳細の確認・修正' : '情報の編集'}</h3>
-            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:12px;">${isNew ? 'AIの解析結果を選択しています。間違っている場合は修正してください。' : ''}</p>
-            <img src="${item.image}" style="width:100%; height:160px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
+            <img src="${currentEditData.image}" style="width:100%; height:160px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
             
             <div class="form-group"><label>カテゴリ</label>
-                <div class="form-btn-group">${renderFormBtns('category', ["トップス", "ボトムス", "アウター", "ワンピース", "シューズ"])}</div>
+                <div class="form-btn-group">${renderSingleBtn('category', Object.keys(CATEGORIES))}</div>
             </div>
-            <div class="form-group"><label>スタイル</label>
-                <div class="form-btn-group">${renderFormBtns('style', ["カジュアル", "大人っぽい", "フォーマル", "スポーティ"])}</div>
-            </div>
-            <div class="form-group"><label>季節</label>
-                <div class="form-btn-group">${renderFormBtns('season', ["春", "夏", "秋", "冬", "オールシーズン"])}</div>
+            ${subCatHtml}
+            
+            <div class="form-group"><label>カラー (複数選択可)</label>
+                <div class="form-btn-group">${renderMultiBtn('colors', COLORS)}</div>
+                <div class="form-btn-group mt-4">${renderSingleBtn('lightness', ["指定なし", "明るい", "暗い"])}</div>
             </div>
             
-            <div class="form-group"><label>メインカラー</label><input type="text" id="input-color" class="input-field" value="${item.color}"></div>
-            <div class="form-group"><label>メモ</label><input type="text" id="input-memo" class="input-field" placeholder="例：ユニクロ 2023年モデル" value="${item.memo}"></div>
+            <div class="form-group"><label>スタイル (複数選択可)</label>
+                <div class="form-btn-group">${renderMultiBtn('styles', STYLES)}</div>
+            </div>
+            <div class="form-group"><label>季節 (複数選択可)</label>
+                <div class="form-btn-group">${renderMultiBtn('seasons', SEASONS)}</div>
+            </div>
+            
+            <div class="form-group"><label>メモ</label><input type="text" id="input-memo" class="input-field" placeholder="例：ユニクロ 2023年モデル" value="${currentEditData.memo}"></div>
             
             <button id="btn-save-item" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
                 ${isNew ? 'クラウドに保存' : '変更を保存'}
             </button>
-            <button id="btn-cancel-item" class="btn-outline text-center">キャンセル</button>
+            <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
         </div>
     `;
     lucide.createIcons();
     
-    document.getElementById('btn-cancel-item').addEventListener('click', closeModal);
-    document.getElementById('btn-save-item').addEventListener('click', async () => {
-        if(!currentUser) return;
-        const btnSave = document.getElementById('btn-save-item');
-        btnSave.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> 保存中...`;
-        btnSave.disabled = true;
-        lucide.createIcons();
-
-        currentEditData.color = document.getElementById('input-color').value || '未設定';
-        currentEditData.memo = document.getElementById('input-memo').value || '';
-        
-        try {
-            if (isNew) {
-                const imgRef = ref(storage, 'images/' + currentUser.uid + '/' + Date.now() + '.jpg');
-                await uploadString(imgRef, currentEditData.image, 'data_url');
-                const downloadURL = await getDownloadURL(imgRef);
-                
-                const docRef = await addDoc(collection(db, "closetItems"), {
-                    userId: currentUser.uid,
-                    image: downloadURL,
-                    category: currentEditData.category,
-                    color: currentEditData.color,
-                    style: currentEditData.style,
-                    season: currentEditData.season,
-                    memo: currentEditData.memo,
-                    createdAt: Date.now()
-                });
-                closetItems.unshift({ id: docRef.id, userId: currentUser.uid, image: downloadURL, category: currentEditData.category, color: currentEditData.color, style: currentEditData.style, season: currentEditData.season, memo: currentEditData.memo });
-                nativeCameraInput.value = '';
-            } else {
-                const targetRef = doc(db, "closetItems", existingId);
-                await updateDoc(targetRef, {
-                    category: currentEditData.category,
-                    color: currentEditData.color,
-                    style: currentEditData.style,
-                    season: currentEditData.season,
-                    memo: currentEditData.memo
-                });
-                const target = closetItems.find(i => i.id === existingId);
-                Object.assign(target, currentEditData);
-            }
-            closeModal();
-            if(currentRoute === 'closet') { const t = currentRoute; currentRoute = ''; navigate(t); }
-            else navigate('closet');
-        } catch(e) {
-            alert("エラーが発生しました: " + e.message);
-            console.error(e);
-            btnSave.textContent = isNew ? 'クラウドに保存' : '変更を保存';
-            btnSave.disabled = false;
-        }
-    });
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    document.getElementById('btn-save-item').addEventListener('click', () => saveItemData(isNew, existingId));
 }
 
-window.setFormData = function(group, val, btnEl) {
+window.setFormSingle = function(group, val) {
     currentEditData[group] = val;
-    btnEl.parentElement.querySelectorAll('.form-btn').forEach(b => b.classList.remove('active'));
-    btnEl.classList.add('active');
+    if(group === 'category') {
+        const subs = CATEGORIES[val];
+        currentEditData.subCategory = (subs && subs.length > 0) ? subs[0] : "";
+    }
+    // Re-render form to reflect sub-category changes
+    renderEditFormContent(!currentEditData.id, currentEditData.id);
+}
+window.toggleFormMulti = function(group, val) {
+    const arr = currentEditData[group];
+    if(arr.includes(val)) arr.splice(arr.indexOf(val), 1);
+    else arr.push(val);
+    renderEditFormContent(!currentEditData.id, currentEditData.id);
 }
 
-function closeModal() { modalContainer.classList.add('hidden'); }
+async function saveItemData(isNew, existingId) {
+    if(!currentUser) return;
+    const btnSave = document.getElementById('btn-save-item');
+    btnSave.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> 保存中...`;
+    btnSave.disabled = true;
+    lucide.createIcons();
+
+    currentEditData.memo = document.getElementById('input-memo').value || '';
+    
+    try {
+        if (isNew) {
+            const imgRef = ref(storage, 'images/' + currentUser.uid + '/' + Date.now() + '.jpg');
+            await uploadString(imgRef, currentEditData.image, 'data_url');
+            const downloadURL = await getDownloadURL(imgRef);
+            currentEditData.image = downloadURL;
+            
+            const docData = { userId: currentUser.uid, createdAt: Date.now(), ...currentEditData };
+            const docRef = await addDoc(collection(db, "closetItems"), docData);
+            closetItems.unshift({ id: docRef.id, ...docData });
+            nativeCameraInput.value = '';
+        } else {
+            const targetRef = doc(db, "closetItems", existingId);
+            const docData = { ...currentEditData };
+            await updateDoc(targetRef, docData);
+            const target = closetItems.find(i => i.id === existingId);
+            Object.assign(target, docData);
+        }
+        closeModal();
+        if(currentRoute === 'closet') { const t = currentRoute; currentRoute = ''; navigate(t); }
+        else navigate('closet');
+    } catch(e) {
+        alert("エラーが発生しました: " + e.message);
+        console.error(e);
+        btnSave.textContent = isNew ? 'クラウドに保存' : '変更を保存';
+        btnSave.disabled = false;
+    }
+}
+
+// コーデ検証ルーム
+window.openCoordPicker = function(slot) {
+    currentTargetSlot = slot;
+    const items = closetItems.filter(i => slot === 'トップス・アウター' ? i.category === 'トップス・アウター' : ['ボトムス', '靴'].includes(i.category));
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+            <h3 class="section-title">${slot}を選択</h3>
+            <div class="closet-grid">
+                ${items.map(item => `<div class="closet-item" onclick="selectForCoord('${item.id}')"><img src="${item.image}"></div>`).join('')}
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">キャンセル</button>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+}
+window.selectForCoord = function(id) {
+    const item = closetItems.find(i => i.id === id);
+    if(currentTargetSlot === 'トップス・アウター') coordState.tops = item;
+    else coordState.bottoms = item;
+    closeModal(); navigate('home');
+}
+window.clearCoord = function(slotKey) { coordState[slotKey] = null; navigate('home'); }
+window.analyzeCoordination = function() {
+    const resEl = document.getElementById('coord-result');
+    if(!coordState.tops || !coordState.bottoms) {
+        resEl.innerHTML = `<span style="color:#ef4444;"><i data-lucide="alert-circle" class="inline-icon"></i> トップスとボトムスの両方を選択してください！</span>`;
+        resEl.classList.remove('hidden'); lucide.createIcons(); return;
+    }
+    resEl.innerHTML = `<i data-lucide="loader" class="spinner inline-icon"></i> AIが分析中...`;
+    resEl.classList.remove('hidden'); lucide.createIcons();
+    setTimeout(() => {
+        const t = coordState.tops; const b = coordState.bottoms;
+        resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>「${t.subCategory||t.category}」と「${b.subCategory||b.category}」の組み合わせですね！<br><span style="font-size:0.8rem; color:var(--text-secondary);">${(t.colors||[]).join('')}色 × ${(b.colors||[]).join('')}色の色合いもバッチリです！</span>`;
+    }, 1500);
+}
+
+// グローバルにエクスポート（バグ修正）
+window.closeModal = function() { modalContainer.classList.add('hidden'); }
 window.setTheme = function(themeName) { document.body.className = `theme-${themeName}`; localStorage.setItem('ai-closet-theme', themeName); updateThemeButtons(); };
 function updateThemeButtons() {
     const currentTheme = localStorage.getItem('ai-closet-theme') || 'morning';
@@ -804,7 +844,6 @@ window.connectGoogleCalendar = function() {
     googleTokenClient.requestAccessToken();
 }
 function init() {
-    window.openEditForm = window.openEditForm; 
     const savedTheme = localStorage.getItem('ai-closet-theme') || 'morning'; document.body.className = `theme-${savedTheme}`;
     mainContent.style.transition = 'opacity 0.15s ease';
     setTimeout(() => { initGoogleAuth(); }, 1000);

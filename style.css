@@ -127,6 +127,11 @@ input:checked + .slider:before { transform: translateX(20px); }
 .coord-slot img { width: 100%; height: 100%; object-fit: cover; }
 .coord-slot-clear { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.5); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 0.8rem; }
 
+/* 1-Week Carousel */
+.carousel-container { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 16px; padding-bottom: 12px; margin-bottom: 24px; }
+.carousel-container::-webkit-scrollbar { display: none; }
+.carousel-item { scroll-snap-align: center; flex: 0 0 85%; }
+
 @keyframes spin { 100% { transform: rotate(360deg); } }
 .spinner { animation: spin 1s linear infinite; }
 .text-center { text-align: center; }
