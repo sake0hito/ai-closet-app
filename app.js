@@ -80,6 +80,8 @@ let coordState = { type: null, tops: null, bottoms: null, shoes: null, hat: null
 let currentTargetSlot = null;
 let currentEditData = {};
 let styleChartInstance = null;
+let historyView = localStorage.getItem('history_view') || 'list'; // 'list' | 'calendar'
+let calendarMonth = new Date();
 
 // チャット履歴（ページ内のみ保持）
 let chatMessages = [
@@ -697,6 +699,12 @@ const routes = {
     history: {
         title: "着用履歴",
         showFab: false,
+        headerAction: `
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button id="btn-history-view-list" onclick="setHistoryView('list')" style="background:none; border:none; cursor:pointer; padding:4px; color:var(--primary-color);" title="リスト表示"><i data-lucide="list"></i></button>
+                <button id="btn-history-view-cal" onclick="setHistoryView('calendar')" style="background:none; border:none; cursor:pointer; padding:4px; color:var(--primary-color);" title="カレンダー表示"><i data-lucide="calendar-days"></i></button>
+            </div>
+        `,
         render: () => {
             if (!isDataLoaded) {
                 return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
@@ -704,28 +712,12 @@ const routes = {
             let html = `
             <button onclick="openAddHistoryModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
                 <i data-lucide="plus-circle" class="inline-icon"></i> 着用を手動で記録する
-            </button>
-            <div class="card"><h3 class="section-title">これまでの履歴</h3>`;
-            if (wearHistory.length === 0) {
-                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すか、上のボタンから手動で記録できます。</p>`;
+            </button>`;
+            if (historyView === 'calendar') {
+                html += renderHistoryCalendar();
             } else {
-                html += `<div style="display:flex; flex-direction:column; gap:16px;">`;
-                wearHistory.forEach(h => {
-                    html += `
-                    <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
-                        <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=80'}" style="width:72px; height:72px; border-radius:8px; object-fit:cover; flex-shrink:0;" alt="outfit">
-                        <div style="flex:1; min-width:0;">
-                            <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
-                            <p style="font-size:0.9rem; font-weight:bold; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${h.title}</p>
-                        </div>
-                        <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:8px; flex-shrink:0;">
-                            <i data-lucide="trash-2" style="width:18px; height:18px;"></i>
-                        </button>
-                    </div>`;
-                });
-                html += `</div>`;
+                html += renderHistoryList();
             }
-            html += `</div>`;
             return html;
         }
     },
@@ -1125,10 +1117,10 @@ function renderEditFormContent() {
     const existingId = currentEditData._existingId;
 
     const renderSingleBtn = (group, options) =>
-        options.map(opt => `<button type="button" class="form-btn ${currentEditData[group] === opt ? 'active' : ''}" onclick="setFormSingle('${group}', '${opt}')">${opt}</button>`).join('');
+        options.map(opt => `<button type="button" class="form-btn ${currentEditData[group] === opt ? 'active' : ''}" data-group="${group}" data-val="${opt}" onclick="setFormSingle('${group}', '${opt}')">${opt}</button>`).join('');
 
     const renderMultiBtn = (group, options) =>
-        options.map(opt => `<button type="button" class="form-btn ${currentEditData[group].includes(opt) ? 'active' : ''}" onclick="toggleFormMulti('${group}', '${opt}')">${opt}</button>`).join('');
+        options.map(opt => `<button type="button" class="form-btn ${(currentEditData[group]||[]).includes(opt) ? 'active' : ''}" data-group="${group}" data-val="${opt}" onclick="toggleFormMulti('${group}', '${opt}')">${opt}</button>`).join('');
 
     const subs = CATEGORIES[currentEditData.category];
     const subCatHtml = (subs && subs.length > 0)
@@ -1173,22 +1165,34 @@ function renderEditFormContent() {
     document.getElementById('btn-save-item').addEventListener('click', () => saveItemData(isNew, existingId));
 }
 
-// フォームの単一選択
+// フォームの単一選択（スクロール位置を保持）
 window.setFormSingle = function(group, val) {
     currentEditData[group] = val;
     if (group === 'category') {
+        // カテゴリ変更時は種類ボタンが変わるので部分的に再描画
         const subs = CATEGORIES[val];
         currentEditData.subCategory = (subs && subs.length > 0) ? subs[0] : "";
+        const mc = document.querySelector('.modal-content');
+        const scrollPos = mc?.scrollTop || 0;
+        renderEditFormContent();
+        if (mc) requestAnimationFrame(() => { mc.scrollTop = scrollPos; });
+    } else {
+        // それ以外はボタンのactive状態だけ更新（再描画なし）
+        document.querySelectorAll(`[data-group="${group}"]`).forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.val === val);
+        });
     }
-    renderEditFormContent();
 };
 
-// フォームの複数選択
+// フォームの複数選択（再描画なし）
 window.toggleFormMulti = function(group, val) {
+    if (!currentEditData[group]) currentEditData[group] = [];
     const arr = currentEditData[group];
     if (arr.includes(val)) arr.splice(arr.indexOf(val), 1);
     else arr.push(val);
-    renderEditFormContent();
+    // クリックされたボタンのactive状態だけ更新
+    const btn = document.querySelector(`[data-group="${group}"][data-val="${val}"]`);
+    if (btn) btn.classList.toggle('active', arr.includes(val));
 };
 
 async function saveItemData(isNew, existingId) {
@@ -1424,6 +1428,217 @@ window.analyzeCoordination = async function() {
 };
 
 // =============================================
+// 着用履歴 表示・詳細・編集・削除・追加
+// =============================================
+
+window.setHistoryView = function(view) {
+    historyView = view;
+    localStorage.setItem('history_view', view);
+    navigate('history');
+};
+
+function renderHistoryList() {
+    if (wearHistory.length === 0) {
+        return `<div class="card"><p style="color:var(--text-secondary); font-size:0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すか、上のボタンから手動で記録できます。</p></div>`;
+    }
+    let html = `<div class="card"><div style="display:flex; flex-direction:column; gap:16px;">`;
+    wearHistory.forEach(h => {
+        html += `
+        <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
+            <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=80'}"
+                style="width:72px; height:72px; border-radius:8px; object-fit:cover; flex-shrink:0; cursor:pointer;"
+                onclick="openHistoryDetail('${h.id}')" alt="outfit">
+            <div style="flex:1; min-width:0; cursor:pointer;" onclick="openHistoryDetail('${h.id}')">
+                <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
+                <p style="font-size:0.9rem; font-weight:bold; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${h.title}</p>
+                ${h.memo ? `<p style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${h.memo}</p>` : ''}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; flex-shrink:0;">
+                <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer; padding:6px;">
+                    <i data-lucide="pencil" style="width:16px; height:16px;"></i>
+                </button>
+                <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:6px;">
+                    <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+                </button>
+            </div>
+        </div>`;
+    });
+    html += `</div></div>`;
+    return html;
+}
+
+function renderHistoryCalendar() {
+    const y = calendarMonth.getFullYear();
+    const m = calendarMonth.getMonth();
+    const monthStr = calendarMonth.toLocaleDateString('ja-JP', {year:'numeric', month:'long'});
+
+    // 月の日数と最初の曜日
+    const firstDay = new Date(y, m, 1).getDay(); // 0=日
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+
+    // 履歴をisoDate別にインデックス化
+    const historyByDate = {};
+    wearHistory.forEach(h => {
+        const iso = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : null);
+        if (iso && iso.startsWith(`${y}-${String(m+1).padStart(2,'0')}`)) {
+            if (!historyByDate[iso]) historyByDate[iso] = [];
+            historyByDate[iso].push(h);
+        }
+    });
+
+    let html = `
+    <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+            <button onclick="shiftCalendarMonth(-1)" style="background:none; border:none; cursor:pointer; color:var(--primary-color); padding:4px 8px; font-size:1.2rem;">‹</button>
+            <span style="font-weight:bold; font-size:1rem;">${monthStr}</span>
+            <button onclick="shiftCalendarMonth(1)" style="background:none; border:none; cursor:pointer; color:var(--primary-color); padding:4px 8px; font-size:1.2rem;">›</button>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:4px; text-align:center;">
+            ${['日','月','火','水','木','金','土'].map((d,i) => `<div style="font-size:0.7rem; font-weight:bold; color:${i===0?'#ef4444':i===6?'#3b82f6':'var(--text-secondary)'}; padding:4px 0;">${d}</div>`).join('')}
+        `;
+
+    // 空白セル
+    for (let i = 0; i < firstDay; i++) html += `<div></div>`;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const iso = `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const items = historyByDate[iso] || [];
+        const today = new Date().toISOString().split('T')[0];
+        const isToday = iso === today;
+        const dow = new Date(y, m, day).getDay();
+        const color = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : 'var(--text-primary)';
+
+        html += `
+        <div onclick="${items.length > 0 ? `openHistoryDayModal('${iso}')` : ''}"
+            style="padding:6px 2px; border-radius:8px; cursor:${items.length > 0 ? 'pointer' : 'default'};
+            background:${isToday ? 'var(--primary-light)' : items.length > 0 ? 'rgba(14,165,233,0.08)' : 'transparent'};
+            border:${isToday ? '1.5px solid var(--primary-color)' : '1.5px solid transparent'};">
+            <div style="font-size:0.85rem; color:${color}; font-weight:${isToday?'bold':'normal'};">${day}</div>
+            ${items.length > 0 ? `<div style="display:flex; justify-content:center; gap:2px; margin-top:2px;">${items.slice(0,3).map(() => '<div style="width:5px;height:5px;border-radius:50%;background:var(--primary-color);"></div>').join('')}</div>` : '<div style="height:7px;"></div>'}
+        </div>`;
+    }
+
+    html += `</div></div>`;
+    return html;
+}
+
+window.shiftCalendarMonth = function(delta) {
+    calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + delta, 1);
+    navigate('history');
+};
+
+window.openHistoryDayModal = function(iso) {
+    const items = wearHistory.filter(h => {
+        const d = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : null);
+        return d === iso;
+    });
+    const dateStr = new Date(iso).toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'});
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+            <h3 class="section-title">${dateStr}の着用</h3>
+            <div style="display:flex; flex-direction:column; gap:12px;">
+                ${items.map(h => `
+                <div style="display:flex; gap:12px; align-items:center; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px;">
+                    <img src="${h.image || ''}" style="width:60px; height:60px; border-radius:8px; object-fit:cover; flex-shrink:0;">
+                    <div style="flex:1;">
+                        <p style="font-weight:bold;">${h.title}</p>
+                        ${h.memo ? `<p style="font-size:0.8rem; color:var(--text-secondary);">${h.memo}</p>` : ''}
+                    </div>
+                    <button onclick="openHistoryEdit('${h.id}'); closeModal();" style="background:none; border:none; color:var(--primary-color); cursor:pointer;">
+                        <i data-lucide="pencil" style="width:16px; height:16px;"></i>
+                    </button>
+                </div>`).join('')}
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+window.openHistoryDetail = function(id) {
+    const h = wearHistory.find(x => x.id === id);
+    if (!h) return;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <h3 class="section-title">着用詳細</h3>
+            <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400'}"
+                style="width:100%; height:200px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
+            <p style="font-size:0.8rem; color:var(--primary-color); font-weight:bold; margin-bottom:6px;">${h.dateStr}</p>
+            <p style="font-size:1rem; font-weight:bold; margin-bottom:8px;">${h.title}</p>
+            ${h.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${h.memo}</p>` : ''}
+            <button onclick="openHistoryEdit('${h.id}'); closeModal();" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
+                編集する
+            </button>
+            <button onclick="deleteHistoryItem('${h.id}'); closeModal();" style="width:100%; background:transparent; color:#ef4444; border:1px solid #ef4444; padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
+                削除する
+            </button>
+            <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+window.openHistoryEdit = function(id) {
+    const h = wearHistory.find(x => x.id === id);
+    if (!h) return;
+    // createdAtからdateInputの値を作成
+    const dateVal = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">着用履歴を編集</h3>
+            <img src="${h.image || ''}" style="width:100%; height:140px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
+            <div class="form-group">
+                <label style="font-weight:600; font-size:0.9rem;">着用日</label>
+                <input type="date" id="edit-history-date" class="input-field" value="${dateVal}" style="margin-top:6px;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">タイトル</label>
+                <input type="text" id="edit-history-title" class="input-field" value="${h.title}" style="margin-top:6px;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">メモ</label>
+                <input type="text" id="edit-history-memo" class="input-field" value="${h.memo || ''}" placeholder="例：仕事、デートなど" style="margin-top:6px;">
+            </div>
+            <button onclick="saveHistoryEdit('${id}')" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
+            <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+window.saveHistoryEdit = async function(id) {
+    const dateInput = document.getElementById('edit-history-date')?.value;
+    const title = document.getElementById('edit-history-title')?.value?.trim();
+    const memo  = document.getElementById('edit-history-memo')?.value?.trim() || '';
+    if (!dateInput || !title) { alert('着用日とタイトルを入力してください。'); return; }
+
+    const dateObj = new Date(dateInput);
+    const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
+    const isoDate = dateInput;
+
+    try {
+        await updateDoc(doc(db, "history", id), { title, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        const idx = wearHistory.findIndex(h => h.id === id);
+        if (idx !== -1) Object.assign(wearHistory[idx], { title, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+        closeModal();
+        navigate('history');
+    } catch(e) {
+        alert('保存に失敗しました。');
+        console.error(e);
+    }
+};
+
+// =============================================
 // 着用履歴 削除・手動追加
 // =============================================
 window.deleteHistoryItem = async function(id) {
@@ -1502,16 +1717,15 @@ window.saveManualHistory = async function() {
         : (memo || 'コーデ記録');
 
     try {
+        const isoDate = dateInput;
         const docRef = await addDoc(collection(db, "history"), {
             userId: currentUser.uid,
-            title,
-            image,
-            dateStr,
+            title, image, dateStr, isoDate,
             closetItemId: selectedItem?.id || null,
             memo,
             createdAt: dateObj.getTime()
         });
-        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title, image, dateStr, closetItemId: selectedItem?.id || null, memo, createdAt: dateObj.getTime() });
+        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title, image, dateStr, isoDate, closetItemId: selectedItem?.id || null, memo, createdAt: dateObj.getTime() });
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
         selectedHistoryItemId = null;
         closeModal();
