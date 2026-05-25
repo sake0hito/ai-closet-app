@@ -76,7 +76,7 @@ let currentRoute = '';
 let isEditMode = false;
 let selectedItems = new Set();
 let activeFilters = { category: [], subCategory: [], colors: [], styles: [], seasons: [], lightness: [] };
-let coordState = { tops: null, bottoms: null };
+let coordState = { type: null, tops: null, bottoms: null, shoes: null, hat: null };
 let currentTargetSlot = null;
 let currentEditData = {};
 let styleChartInstance = null;
@@ -245,7 +245,8 @@ async function fetchFirebaseData() {
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
 
         isDataLoaded = true;
-        if (currentRoute === 'closet' || currentRoute === 'history') navigate(currentRoute);
+        generateWeeklyOutfitsFromCloset();
+        if (currentRoute === 'closet' || currentRoute === 'history' || currentRoute === 'home') navigate(currentRoute);
     } catch (e) {
         console.error("Firebase読み込みエラー:", e);
     }
@@ -397,6 +398,64 @@ function initStyleChart() {
 }
 
 // =============================================
+// 週間コーデ生成（所持服優先・前日被り防止）
+// =============================================
+function generateWeeklyOutfitsFromCloset() {
+    if (closetItems.length === 0) return;
+
+    const tops      = closetItems.filter(i => i.category === 'トップス・アウター');
+    const bottoms   = closetItems.filter(i => i.category === 'ボトムス');
+    const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス');
+
+    // 直近の着用履歴IDセット（被り回避）
+    const recentIds = new Set(wearHistory.slice(0, 14).map(h => h.closetItemId).filter(Boolean));
+
+    let prevTopsId    = null;
+    let prevBottomsId = null;
+    let prevOpId      = null;
+
+    weeklyOutfits.forEach(outfit => {
+        const weather = outfit.temp !== '--°C' ? `気温${outfit.temp}・${outfit.condition}` : '';
+
+        // ワンピース候補（前日・最近着用を除く）
+        const opCandidates = onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id));
+        // トップス候補（前日・最近着用を除く）
+        const topsCandidates = tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id));
+        const bottomsCandidates = bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id));
+
+        const useOnepiece = opCandidates.length > 0 && (topsCandidates.length === 0 || Math.random() < 0.25);
+
+        if (useOnepiece) {
+            const op = opCandidates[Math.floor(Math.random() * opCandidates.length)];
+            outfit.image = op.image;
+            outfit.tags  = [...new Set([
+                ...(op.styles  || []).map(s => s.replace('系', '')),
+                ...(op.seasons || [])
+            ])].slice(0, 3);
+            outfit.reason = `${weather ? weather + 'に合わせた' : ''}あなたの「${op.subCategory || 'ワンピース'}」コーデです。`;
+            prevOpId = op.id;
+        } else if (topsCandidates.length > 0) {
+            const t = topsCandidates[Math.floor(Math.random() * topsCandidates.length)];
+            const bPool = bottomsCandidates.length > 0 ? bottomsCandidates : bottoms;
+            const b = bPool.length > 0 ? bPool[Math.floor(Math.random() * bPool.length)] : null;
+            outfit.image = t.image;
+            const styleTags = [...new Set([
+                ...(t.styles || []).map(s => s.replace('系', '')),
+                ...(b ? (b.styles || []).map(s => s.replace('系', '')) : [])
+            ])].slice(0, 2);
+            outfit.tags = [...styleTags, ...(t.seasons || []).slice(0, 1)];
+            outfit.reason = b
+                ? `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」×「${b.subCategory || b.category}」コーデです。`
+                : `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」を使ったコーデです。`;
+            prevTopsId    = t.id;
+            prevBottomsId = b ? b.id : prevBottomsId;
+        }
+    });
+
+    if (currentRoute === 'home') navigate('home');
+}
+
+// =============================================
 // AI チャット
 // =============================================
 window.sendQuickPrompt = function(prompt) {
@@ -537,21 +596,9 @@ const routes = {
             // コーデ検証ルーム
             html += `
             <h3 class="section-title mt-4">コーデ検証ルーム</h3>
-            <div class="card">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの衣類を組み合わせてAIの評価を聞いてみよう！</p>
-                <div class="coord-slots">
-                    <div class="coord-slot" onclick="openCoordPicker('トップス・アウター')" id="slot-tops">
-                        ${coordState.tops ? `<img src="${coordState.tops.image}"><div class="coord-slot-clear" onclick="event.stopPropagation(); clearCoord('tops')">✕</div>` : 'トップス未選択'}
-                    </div>
-                    <div class="coord-slot" onclick="openCoordPicker('ボトムス')" id="slot-bottoms">
-                        ${coordState.bottoms ? `<img src="${coordState.bottoms.image}"><div class="coord-slot-clear" onclick="event.stopPropagation(); clearCoord('bottoms')">✕</div>` : 'ボトムス未選択'}
-                    </div>
-                </div>
-                <button class="btn-outline mt-4" onclick="analyzeCoordination()">
-                    <i data-lucide="sparkles" class="inline-icon" style="color:var(--accent-color);"></i>
-                    この組み合わせをAIで分析する
-                </button>
-                <div id="coord-result" class="hidden mt-4" style="background:var(--primary-light); padding:16px; border-radius:8px; font-size:0.9rem; line-height:1.5;"></div>
+            <div class="card" id="coord-room">
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>
+                ${renderCoordRoom()}
             </div>
             `;
 
@@ -654,19 +701,26 @@ const routes = {
             if (!isDataLoaded) {
                 return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
             }
-            let html = `<div class="card"><h3 class="section-title">これまでの履歴</h3>`;
+            let html = `
+            <button onclick="openAddHistoryModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                <i data-lucide="plus-circle" class="inline-icon"></i> 着用を手動で記録する
+            </button>
+            <div class="card"><h3 class="section-title">これまでの履歴</h3>`;
             if (wearHistory.length === 0) {
-                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すと記録されます。</p>`;
+                html += `<p style="color: var(--text-secondary); font-size: 0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すか、上のボタンから手動で記録できます。</p>`;
             } else {
                 html += `<div style="display:flex; flex-direction:column; gap:16px;">`;
                 wearHistory.forEach(h => {
                     html += `
-                    <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px;">
-                        <img src="${h.image}" style="width:80px; height:80px; border-radius:8px; object-fit:cover;" alt="outfit">
-                        <div>
+                    <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
+                        <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=80'}" style="width:72px; height:72px; border-radius:8px; object-fit:cover; flex-shrink:0;" alt="outfit">
+                        <div style="flex:1; min-width:0;">
                             <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
-                            <p style="font-size:0.9rem; font-weight:bold; margin-top:4px;">${h.title}</p>
+                            <p style="font-size:0.9rem; font-weight:bold; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${h.title}</p>
                         </div>
+                        <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:8px; flex-shrink:0;">
+                            <i data-lucide="trash-2" style="width:18px; height:18px;"></i>
+                        </button>
                     </div>`;
                 });
                 html += `</div>`;
@@ -710,13 +764,6 @@ const routes = {
                     </button>
                     <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">ボタンを押すとブラウザから位置情報の許可を求めます。</p>
                 `}
-            </div>
-
-            <div class="card mt-4">
-                <h3 class="section-title">🤖 AI機能</h3>
-                <div class="info-box" style="color:#10b981; background:rgba(16,185,129,0.08); border-color:#10b981;">
-                    ✅ AI機能は有効です。コーデ提案・画像認識・チャットがすぐに使えます。
-                </div>
             </div>
 
             <div class="card mt-4">
@@ -1205,9 +1252,15 @@ async function saveItemData(isNew, existingId) {
 // =============================================
 window.openCoordPicker = function(slot) {
     currentTargetSlot = slot;
-    const items = closetItems.filter(i =>
-        slot === 'トップス・アウター' ? i.category === 'トップス・アウター' : ['ボトムス', '靴'].includes(i.category)
-    );
+    const categoryMap = {
+        'トップス・アウター': ['トップス・アウター'],
+        'ワンピース': ['ワンピース', 'ドレス'],
+        'ボトムス': ['ボトムス'],
+        '靴': ['靴'],
+        '帽子': ['帽子'],
+    };
+    const cats = categoryMap[slot] || [slot];
+    const items = closetItems.filter(i => cats.includes(i.category));
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
@@ -1223,22 +1276,122 @@ window.openCoordPicker = function(slot) {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
-window.selectForCoord = function(id) {
-    const item = closetItems.find(i => i.id === id);
-    if (currentTargetSlot === 'トップス・アウター') coordState.tops = item;
-    else coordState.bottoms = item;
-    closeModal();
-    navigate('home');
+// コーデ検証ルーム レンダリング
+function renderCoordRoom() {
+    const slotBtn = (label, slotKey, item, onclick, clearKey) => {
+        if (item) {
+            return `<div class="coord-slot" style="position:relative;">
+                <img src="${item.image}" style="width:100%; height:100%; object-fit:cover; border-radius:8px;">
+                <div style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.6); color:white; border-radius:50%; width:22px; height:22px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:12px;" onclick="clearCoord('${clearKey}')">✕</div>
+                <div style="font-size:0.7rem; text-align:center; margin-top:4px; color:var(--text-secondary);">${label}</div>
+            </div>`;
+        }
+        return `<div class="coord-slot" onclick="${onclick}" style="cursor:pointer; opacity:0.7;">
+            <span style="font-size:0.8rem; color:var(--text-secondary);">${label}</span>
+        </div>`;
+    };
+
+    // ステップ1: タイプ未選択
+    if (!coordState.type) {
+        return `
+        <p style="font-size:0.85rem; font-weight:600; margin-bottom:12px;">① トップスの種類を選んでください</p>
+        <div style="display:flex; gap:10px;">
+            <button onclick="setCoordType('tops')" style="flex:1; padding:14px; background:var(--primary-light); border:2px solid var(--primary-color); border-radius:10px; color:var(--primary-color); font-weight:600; cursor:pointer;">
+                👕 トップス・アウター
+            </button>
+            <button onclick="setCoordType('onepiece')" style="flex:1; padding:14px; background:var(--primary-light); border:2px solid var(--accent-color); border-radius:10px; color:var(--accent-color); font-weight:600; cursor:pointer;">
+                👗 ワンピース
+            </button>
+        </div>`;
+    }
+
+    let html = '';
+
+    // トップス/ワンピース スロット
+    if (coordState.type === 'tops') {
+        html += `<p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px;">① トップス・アウター</p>
+        <div class="coord-slots" style="margin-bottom:12px;">
+            ${slotBtn('トップス・アウターを選ぶ', 'tops', coordState.tops, "openCoordPicker('トップス・アウター')", 'tops')}
+        </div>`;
+        if (coordState.tops) {
+            html += `<p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px;">② ボトムス</p>
+            <div class="coord-slots" style="margin-bottom:12px;">
+                ${slotBtn('ボトムスを選ぶ', 'bottoms', coordState.bottoms, "openCoordPicker('ボトムス')", 'bottoms')}
+            </div>`;
+        }
+    } else {
+        html += `<p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px;">① ワンピース</p>
+        <div class="coord-slots" style="margin-bottom:12px;">
+            ${slotBtn('ワンピースを選ぶ', 'onepiece', coordState.tops, "openCoordPicker('ワンピース')", 'tops')}
+        </div>`;
+    }
+
+    const mainSelected = coordState.type === 'tops' ? coordState.tops : coordState.tops;
+    const step = coordState.type === 'tops' ? (mainSelected && coordState.bottoms ? 3 : mainSelected ? 2 : 1) : (mainSelected ? 2 : 1);
+    const showOptionals = (coordState.type === 'tops' && coordState.bottoms) || (coordState.type === 'onepiece' && coordState.tops);
+
+    if (showOptionals) {
+        const shoeStep = coordState.type === 'tops' ? '③' : '②';
+        const hatStep  = coordState.type === 'tops' ? '④' : '③';
+        html += `<p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px;">${shoeStep} 靴（任意）</p>
+        <div class="coord-slots" style="margin-bottom:12px;">
+            ${slotBtn('靴を選ぶ（任意）', 'shoes', coordState.shoes, "openCoordPicker('靴')", 'shoes')}
+        </div>
+        <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px;">${hatStep} 帽子（任意）</p>
+        <div class="coord-slots" style="margin-bottom:12px;">
+            ${slotBtn('帽子を選ぶ（任意）', 'hat', coordState.hat, "openCoordPicker('帽子')", 'hat')}
+        </div>
+        <button onclick="analyzeCoordination()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
+            <i data-lucide="sparkles" class="inline-icon"></i> AIで分析する
+        </button>`;
+    }
+
+    html += `<button onclick="resetCoord()" class="btn-outline text-center" style="font-size:0.8rem; padding:8px; margin-top:4px;">最初からやり直す</button>`;
+    html += `<div id="coord-result" class="hidden mt-4" style="background:var(--primary-light); padding:16px; border-radius:8px; font-size:0.9rem; line-height:1.5;"></div>`;
+    return html;
+}
+
+function refreshCoordRoom() {
+    const room = document.getElementById('coord-room');
+    if (room) {
+        room.innerHTML = `<p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>` + renderCoordRoom();
+        lucide.createIcons();
+    }
+}
+
+window.setCoordType = function(type) {
+    coordState.type = type;
+    coordState.tops = coordState.bottoms = coordState.shoes = coordState.hat = null;
+    refreshCoordRoom();
 };
 
-window.clearCoord = function(slotKey) { coordState[slotKey] = null; navigate('home'); };
+window.resetCoord = function() {
+    coordState = { type: null, tops: null, bottoms: null, shoes: null, hat: null };
+    refreshCoordRoom();
+};
+
+window.selectForCoord = function(id) {
+    const item = closetItems.find(i => i.id === id);
+    if (currentTargetSlot === 'トップス・アウター' || currentTargetSlot === 'ワンピース') coordState.tops = item;
+    else if (currentTargetSlot === 'ボトムス') coordState.bottoms = item;
+    else if (currentTargetSlot === '靴') coordState.shoes = item;
+    else if (currentTargetSlot === '帽子') coordState.hat = item;
+    closeModal();
+    refreshCoordRoom();
+};
+
+window.clearCoord = function(slotKey) {
+    coordState[slotKey] = null;
+    refreshCoordRoom();
+};
 
 window.analyzeCoordination = async function() {
     const resEl = document.getElementById('coord-result');
     if (!resEl) return;
 
-    if (!coordState.tops || !coordState.bottoms) {
-        resEl.innerHTML = `<span style="color:#ef4444;"><i data-lucide="alert-circle" class="inline-icon"></i> トップスとボトムスの両方を選択してください！</span>`;
+    const main = coordState.tops;
+    if (!main) {
+        resEl.innerHTML = `<span style="color:#ef4444;"><i data-lucide="alert-circle" class="inline-icon"></i> メインアイテムを選択してください！</span>`;
         resEl.classList.remove('hidden');
         lucide.createIcons();
         return;
@@ -1248,14 +1401,17 @@ window.analyzeCoordination = async function() {
     resEl.classList.remove('hidden');
     lucide.createIcons();
 
-    const t = coordState.tops;
-    const b = coordState.bottoms;
+    const describe = item => `${item.subCategory || item.category}（色:${(item.colors||[]).join('・') || 'なし'}、スタイル:${(item.styles||[]).join('・') || 'なし'}）`;
+
+    let itemsDesc = coordState.type === 'tops'
+        ? `トップス：${describe(main)}`
+        : `ワンピース：${describe(main)}`;
+    if (coordState.bottoms) itemsDesc += `\nボトムス：${describe(coordState.bottoms)}`;
+    if (coordState.shoes)   itemsDesc += `\n靴：${describe(coordState.shoes)}`;
+    if (coordState.hat)     itemsDesc += `\n帽子：${describe(coordState.hat)}`;
 
     try {
-        const prompt = `以下の服の組み合わせを分析してください（日本語・150文字以内）：
-トップス：${t.subCategory || t.category}、色：${(t.colors || []).join('・')}、スタイル：${(t.styles || []).join('・')}
-ボトムス：${b.subCategory || b.category}、色：${(b.colors || []).join('・')}、スタイル：${(b.styles || []).join('・')}
-★1〜5の相性評価と、具体的なワンポイントアドバイスを教えてください。`;
+        const prompt = `以下のコーデを分析してください（日本語・200文字以内）：\n${itemsDesc}\n★全体の相性を1〜5で評価し、具体的なワンポイントアドバイスをください。`;
         const result = await callGemini(prompt);
         if (result) {
             resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
@@ -1264,6 +1420,105 @@ window.analyzeCoordination = async function() {
     } catch (e) {
         console.error("コーデ分析エラー:", e);
         resEl.innerHTML = `<strong>⚠️ AI分析エラー</strong><br>しばらく時間をおいて再試行してください。`;
+    }
+};
+
+// =============================================
+// 着用履歴 削除・手動追加
+// =============================================
+window.deleteHistoryItem = async function(id) {
+    if (!confirm('この着用履歴を削除しますか？\nこの操作は取り消せません。')) return;
+    try {
+        await deleteDoc(doc(db, "history", id));
+        wearHistory = wearHistory.filter(h => h.id !== id);
+        navigate('history');
+    } catch(e) {
+        alert('削除に失敗しました。');
+        console.error(e);
+    }
+};
+
+window.openAddHistoryModal = function() {
+    const today = new Date().toISOString().split('T')[0];
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">👗 着用を記録する</h3>
+            <div class="form-group">
+                <label style="font-weight:600; font-size:0.9rem;">着用日</label>
+                <input type="date" id="history-date" class="input-field" value="${today}" style="margin-top:6px;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
+                <input type="text" id="history-memo" class="input-field" placeholder="例：仕事、デートなど" style="margin-top:6px;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">服を選ぶ（任意）</label>
+                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットから選択（省略可）</p>
+                <div class="closet-grid" style="max-height:240px; overflow-y:auto;">
+                    ${closetItems.length === 0
+                        ? '<p style="color:var(--text-secondary); font-size:0.85rem;">クローゼットに服がありません</p>'
+                        : closetItems.map(item => `
+                            <div class="closet-item" id="hist-item-${item.id}" onclick="toggleHistoryItem('${item.id}')" style="cursor:pointer;">
+                                <img src="${item.image}" alt="">
+                            </div>`).join('')
+                    }
+                </div>
+            </div>
+            <button onclick="saveManualHistory()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
+            <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+let selectedHistoryItemId = null;
+window.toggleHistoryItem = function(id) {
+    if (selectedHistoryItemId === id) {
+        selectedHistoryItemId = null;
+        document.querySelectorAll('.closet-item').forEach(el => el.classList.remove('selected'));
+    } else {
+        selectedHistoryItemId = id;
+        document.querySelectorAll('.closet-item').forEach(el => el.classList.remove('selected'));
+        document.getElementById('hist-item-' + id)?.classList.add('selected');
+    }
+};
+
+window.saveManualHistory = async function() {
+    if (!currentUser) return;
+    const dateInput = document.getElementById('history-date')?.value;
+    const memo = document.getElementById('history-memo')?.value?.trim() || '';
+    if (!dateInput) { alert('着用日を入力してください。'); return; }
+
+    const dateObj = new Date(dateInput);
+    const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
+
+    const selectedItem = selectedHistoryItemId ? closetItems.find(i => i.id === selectedHistoryItemId) : null;
+    const image = selectedItem?.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&auto=format&fit=crop';
+    const title = selectedItem
+        ? (selectedItem.subCategory || selectedItem.category)
+        : (memo || 'コーデ記録');
+
+    try {
+        const docRef = await addDoc(collection(db, "history"), {
+            userId: currentUser.uid,
+            title,
+            image,
+            dateStr,
+            closetItemId: selectedItem?.id || null,
+            memo,
+            createdAt: dateObj.getTime()
+        });
+        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title, image, dateStr, closetItemId: selectedItem?.id || null, memo, createdAt: dateObj.getTime() });
+        wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+        selectedHistoryItemId = null;
+        closeModal();
+        navigate('history');
+    } catch(e) {
+        alert('保存に失敗しました。');
+        console.error(e);
     }
 };
 
