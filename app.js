@@ -23,8 +23,8 @@ const storage = getStorage(app);
 // 定数
 // =============================================
 const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.googleusercontent.com";
-const GEMINI_MODEL = "gemini-1.5-flash";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// Cloudflare Workers プロキシ URL
+const WORKER_URL = 'https://ai-closet-gemini.liyuandagui80.workers.dev';
 
 const CATEGORIES = {
     "トップス・アウター": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター", "カーディガン", "ジャケット"],
@@ -100,27 +100,17 @@ const authOverlay = document.getElementById('auth-overlay');
 const authError = document.getElementById('auth-error');
 
 // =============================================
-// Gemini AI API
+// Gemini AI API（Cloudflare Workers 経由）
 // =============================================
 async function callGemini(prompt, imageBase64 = null) {
-    const apiKey = localStorage.getItem('gemini_api_key');
-    if (!apiKey) {
-        alert('⚙️ 設定画面からGemini APIキーを入力してください。\nGoogle AI Studio (aistudio.google.com) で無料取得できます。');
-        navigate('settings');
-        return null;
-    }
+    const base64Data = imageBase64
+        ? imageBase64.replace(/^data:image\/\w+;base64,/, '')
+        : null;
 
-    const parts = [];
-    if (imageBase64) {
-        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-        parts.push({ inline_data: { mime_type: 'image/jpeg', data: base64Data } });
-    }
-    parts.push({ text: prompt });
-
-    const response = await fetch(`${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
+    const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts }] })
+        body: JSON.stringify({ prompt, imageBase64: base64Data })
     });
 
     if (!response.ok) {
@@ -473,18 +463,6 @@ function renderChatMessages(container) {
     container.scrollTop = container.scrollHeight;
 }
 
-// Gemini APIキー保存
-window.saveGeminiKey = function() {
-    const key = document.getElementById('gemini-key-input')?.value?.trim();
-    if (key) {
-        localStorage.setItem('gemini_api_key', key);
-        alert('✅ APIキーを保存しました！');
-    } else {
-        localStorage.removeItem('gemini_api_key');
-        alert('APIキーを削除しました。');
-    }
-    navigate('settings');
-};
 
 // =============================================
 // ヘルパー
@@ -578,11 +556,9 @@ const routes = {
             `;
 
             // AIチャット
-            const hasGeminiKey = !!localStorage.getItem('gemini_api_key');
             html += `
             <h3 class="section-title mt-4">💬 AIスタイリストに相談</h3>
             <div class="card" style="padding:16px;">
-                ${!hasGeminiKey ? `<div class="info-box">⚠️ AIを使うにはGemini APIキーが必要です。<br><a href="#" onclick="navigate('settings'); return false;" style="color:var(--primary-color); font-weight:600;">設定画面で入力 →</a></div>` : ''}
                 <div class="quick-prompts">
                     <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
                     <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
@@ -704,7 +680,6 @@ const routes = {
         title: "設定",
         showFab: false,
         render: () => {
-            const hasGeminiKey = !!localStorage.getItem('gemini_api_key');
             return `
             <div class="card">
                 <h3 class="section-title">テーマカラー</h3>
@@ -738,18 +713,10 @@ const routes = {
             </div>
 
             <div class="card mt-4">
-                <h3 class="section-title">🤖 Gemini AI 設定</h3>
-                <div class="info-box">
-                    <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--primary-color); font-weight:600;">Google AI Studio</a> で無料のAPIキーを取得してください。コーデ提案・画像認識・チャットに使用します。
+                <h3 class="section-title">🤖 AI機能</h3>
+                <div class="info-box" style="color:#10b981; background:rgba(16,185,129,0.08); border-color:#10b981;">
+                    ✅ AI機能は有効です。コーデ提案・画像認識・チャットがすぐに使えます。
                 </div>
-                <input type="password" id="gemini-key-input" class="input-field" placeholder="APIキーを入力 (AIza...)" value="${localStorage.getItem('gemini_api_key') || ''}" style="margin-bottom:8px;">
-                <button onclick="saveGeminiKey()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">
-                    保存する
-                </button>
-                ${hasGeminiKey
-                    ? '<p style="font-size:0.75rem; color:#10b981; margin-top:8px; font-weight:600;">✓ APIキー設定済み — AI機能が使えます</p>'
-                    : '<p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">APIキー未設定 — AI機能は使えません</p>'
-                }
             </div>
 
             <div class="card mt-4">
@@ -1003,7 +970,7 @@ fabAdd.addEventListener('click', () => {
             <div id="upload-area" class="upload-area">
                 <i data-lucide="camera" style="width: 32px; height: 32px; margin-bottom: 8px;"></i>
                 <p>タップしてカメラ撮影<br><span style="font-size: 0.8rem; opacity: 0.8;">または画像を選択</span></p>
-                ${localStorage.getItem('gemini_api_key') ? '<p style="font-size:0.75rem; margin-top:8px; opacity:0.7;">✨ AIが服を自動認識します</p>' : ''}
+                <p style="font-size:0.75rem; margin-top:8px; opacity:0.7;">✨ AIが服を自動認識します</p>
             </div>
             <button onclick="closeModal()" class="btn-outline mt-4 text-center">キャンセル</button>
         </div>
@@ -1031,7 +998,7 @@ async function showAIAnalysisModal() {
         <div class="modal-content text-center">
             <img src="${currentUploadedImage}" style="width:120px; height:120px; object-fit:cover; border-radius:12px; margin:0 auto 16px; display:block;" alt="upload">
             <i data-lucide="loader" class="spinner" style="width: 32px; height: 32px; color: var(--primary-color); margin-bottom: 12px; display:block; margin:0 auto 12px;"></i>
-            <p style="font-weight: 600;">${localStorage.getItem('gemini_api_key') ? 'AIが服を解析中...' : '画像を読み込み中...'}</p>
+            <p style="font-weight: 600;">AIが服を解析中...</p>
         </div>
     `;
     modalContainer.classList.remove('hidden');
@@ -1049,38 +1016,35 @@ async function showAIAnalysisModal() {
         memo: ""
     };
 
-    // Gemini APIキーがあれば本物の画像解析を実行
-    const apiKey = localStorage.getItem('gemini_api_key');
-    if (apiKey) {
-        try {
-            const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
+    // Gemini AIで画像解析を実行
+    try {
+        const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
 {"category":"トップス・アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ のいずれか","subCategory":"カテゴリに合った種類（例：Tシャツ、デニム、スニーカー）","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
 
-            const result = await callGemini(prompt, currentUploadedImage);
-            if (result) {
-                const jsonMatch = result.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    analyzedData = {
-                        image: currentUploadedImage,
-                        category: CATEGORIES.hasOwnProperty(parsed.category) ? parsed.category : analyzedData.category,
-                        subCategory: typeof parsed.subCategory === 'string' ? parsed.subCategory : analyzedData.subCategory,
-                        colors: Array.isArray(parsed.colors) ? parsed.colors.filter(c => COLORS.includes(c)) : analyzedData.colors,
-                        lightness: "指定なし",
-                        styles: Array.isArray(parsed.styles) ? parsed.styles.filter(s => STYLES.includes(s)) : analyzedData.styles,
-                        seasons: Array.isArray(parsed.seasons) ? parsed.seasons.filter(s => SEASONS.includes(s)) : analyzedData.seasons,
-                        memo: ""
-                    };
-                    // 解析結果が空配列になった場合はデフォルトに戻す
-                    if (analyzedData.colors.length === 0) analyzedData.colors = ["白"];
-                    if (analyzedData.styles.length === 0) analyzedData.styles = ["カジュアル系"];
-                    if (analyzedData.seasons.length === 0) analyzedData.seasons = ["オールシーズン"];
-                }
+        const result = await callGemini(prompt, currentUploadedImage);
+        if (result) {
+            const jsonMatch = result.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                analyzedData = {
+                    image: currentUploadedImage,
+                    category: CATEGORIES.hasOwnProperty(parsed.category) ? parsed.category : analyzedData.category,
+                    subCategory: typeof parsed.subCategory === 'string' ? parsed.subCategory : analyzedData.subCategory,
+                    colors: Array.isArray(parsed.colors) ? parsed.colors.filter(c => COLORS.includes(c)) : analyzedData.colors,
+                    lightness: "指定なし",
+                    styles: Array.isArray(parsed.styles) ? parsed.styles.filter(s => STYLES.includes(s)) : analyzedData.styles,
+                    seasons: Array.isArray(parsed.seasons) ? parsed.seasons.filter(s => SEASONS.includes(s)) : analyzedData.seasons,
+                    memo: ""
+                };
+                // 解析結果が空配列になった場合はデフォルトに戻す
+                if (analyzedData.colors.length === 0) analyzedData.colors = ["白"];
+                if (analyzedData.styles.length === 0) analyzedData.styles = ["カジュアル系"];
+                if (analyzedData.seasons.length === 0) analyzedData.seasons = ["オールシーズン"];
             }
-        } catch (e) {
-            console.warn("AI画像解析に失敗しました（デフォルト値で続行）:", e.message);
-            // エラー時はデフォルト値のまま続行（アラートは出さない）
         }
+    } catch (e) {
+        console.warn("AI画像解析に失敗しました（デフォルト値で続行）:", e.message);
+        // エラー時はデフォルト値のまま続行（アラートは出さない）
     }
 
     window.openEditForm(null, analyzedData);
@@ -1287,25 +1251,20 @@ window.analyzeCoordination = async function() {
     const t = coordState.tops;
     const b = coordState.bottoms;
 
-    const apiKey = localStorage.getItem('gemini_api_key');
-    if (apiKey) {
-        try {
-            const prompt = `以下の服の組み合わせを分析してください（日本語・150文字以内）：
+    try {
+        const prompt = `以下の服の組み合わせを分析してください（日本語・150文字以内）：
 トップス：${t.subCategory || t.category}、色：${(t.colors || []).join('・')}、スタイル：${(t.styles || []).join('・')}
 ボトムス：${b.subCategory || b.category}、色：${(b.colors || []).join('・')}、スタイル：${(b.styles || []).join('・')}
 ★1〜5の相性評価と、具体的なワンポイントアドバイスを教えてください。`;
-            const result = await callGemini(prompt);
-            if (result) {
-                resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
-                return;
-            }
-        } catch (e) {
-            console.error("コーデ分析エラー:", e);
+        const result = await callGemini(prompt);
+        if (result) {
+            resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
+            return;
         }
+    } catch (e) {
+        console.error("コーデ分析エラー:", e);
+        resEl.innerHTML = `<strong>⚠️ AI分析エラー</strong><br>しばらく時間をおいて再試行してください。`;
     }
-
-    // Geminiなし時のフォールバック
-    resEl.innerHTML = `<strong>✨ 組み合わせ確認</strong><br>「${t.subCategory||t.category}」×「${b.subCategory||b.category}」の組み合わせです。<br><span style="font-size:0.8rem; color:var(--text-secondary);">AI解析はGemini APIキーを設定すると利用できます。</span>`;
 };
 
 // =============================================
