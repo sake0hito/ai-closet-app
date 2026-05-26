@@ -925,6 +925,78 @@ window.saveToHistory = async function(index) {
     }
 };
 
+// =============================================
+// 帽子レコメンド: 季節・気温・天候の複合判定（内部ロジック）
+// =============================================
+function getHatRecommendation(outfit) {
+    const dateObj = outfit.dateObj || new Date();
+    const month = dateObj.getMonth() + 1; // 1〜12
+    const temp = parseInt(outfit.temp);
+    const condition = outfit.condition || '';
+
+    // 天気・気温データ未取得時
+    if (!temp || isNaN(temp) || outfit.temp === '--°C') return { recommend: false };
+
+    // 雨・雪の日は帽子より傘
+    if (condition === '雨' || condition === '雪') return { recommend: false };
+
+    // 季節判定
+    const isSpring = month >= 3 && month <= 5;
+    const isSummer = month >= 6 && month <= 8;
+    const isAutumn = month >= 9 && month <= 11;
+    const isWinter = month === 12 || month <= 2;
+    const isSunny  = condition === '快晴' || condition === '晴れ';
+    const isCloudy = condition === '曇り' || condition === '霧';
+
+    // ── 夏 ──────────────────────────────
+    // 晴れ・高温（≥25°C）→ キャップ（紫外線・暑さ対策）
+    if (isSunny && temp >= 25) {
+        return { recommend: true, type: 'キャップ', subTypes: ['キャップ'],
+            reason: `${temp}°Cの強い日差しと暑さ対策にキャップがおすすめです。UV対策にもなります。` };
+    }
+    // 曇り・高温（≥28°C）→ 蒸し暑いが日差しなし、帽子不要
+    if (isCloudy && temp >= 28) {
+        return { recommend: false };
+    }
+    // 晴れ・やや暑い（20〜24°C）→ キャップ or ハット
+    if (isSunny && temp >= 20 && temp < 25) {
+        return { recommend: true, type: 'キャップ・ハット', subTypes: ['キャップ', 'ハット'],
+            reason: `${temp}°Cの日差し対策に、キャップやハットがぴったりです。` };
+    }
+
+    // ── 春・秋（晴れ）────────────────────
+    // 春 晴れ・暖か（15〜19°C）→ ハット（おしゃれ）
+    if (isSunny && isSpring && temp >= 15) {
+        return { recommend: true, type: 'ハット', subTypes: ['ハット', 'キャップ'],
+            reason: `春の穏やかな日差しに、ハットがコーデのアクセントになります。` };
+    }
+    // 秋 晴れ・涼しい（12〜22°C）→ ハット（秋らしいスタイル）
+    if (isSunny && isAutumn && temp >= 12 && temp <= 22) {
+        return { recommend: true, type: 'ハット', subTypes: ['ハット', 'キャップ'],
+            reason: `秋晴れの日に、ハットがコーデに深みを加えてくれます。` };
+    }
+
+    // ── 秋冬（寒い）─────────────────────
+    // 秋冬 低温（≤8°C）→ ニット帽（防寒必須）
+    if ((isAutumn || isWinter) && temp <= 8) {
+        return { recommend: true, type: 'ニット帽', subTypes: ['ニット帽'],
+            reason: `${temp}°Cの寒さと冷たい風対策に、ニット帽がおすすめです。` };
+    }
+    // 冬 やや寒い（9〜14°C）→ ニット帽またはキャップ
+    if (isWinter && temp <= 14) {
+        return { recommend: true, type: 'ニット帽', subTypes: ['ニット帽', 'キャップ'],
+            reason: `冬の防寒対策に、ニット帽を合わせると暖かく過ごせます。` };
+    }
+    // 秋 少し肌寒い（9〜11°C）→ ニット帽
+    if (isAutumn && temp <= 11) {
+        return { recommend: true, type: 'ニット帽', subTypes: ['ニット帽'],
+            reason: `肌寒い秋の日には、ニット帽で耳まで温めるのがおすすめです。` };
+    }
+
+    // それ以外は帽子不要
+    return { recommend: false };
+}
+
 window.openOutfitDetails = function(index) {
     const outfit = weeklyOutfits[index];
 
@@ -939,26 +1011,32 @@ window.openOutfitDetails = function(index) {
         imageHtml = `<img src="${outfit.topsImage || outfit.image}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">`;
     }
 
-    // 晴れ・日差し強い日の帽子レコメンド
-    const isSunny = outfit.condition === '快晴' || outfit.condition === '晴れ';
+    // 季節・気温・天候に基づくスマート帽子レコメンド
+    const hatRec = getHatRecommendation(outfit);
     let hatHtml = '';
-    if (isSunny) {
-        const hats = closetItems.filter(i => i.category === '帽子');
-        const hatItemHtml = hats.length > 0
+    if (hatRec.recommend) {
+        const allHats = closetItems.filter(i => i.category === '帽子');
+        // 推奨タイプに一致する帽子を優先
+        const matched = hatRec.subTypes
+            ? allHats.filter(h => hatRec.subTypes.some(t => (h.subCategory || '').includes(t)))
+            : allHats;
+        const displayHats = matched.length > 0 ? matched : allHats;
+
+        const hatItemHtml = displayHats.length > 0
             ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
-                ${hats.slice(0, 3).map(hat => `
+                ${displayHats.slice(0, 3).map(hat => `
                     <div style="display:flex; align-items:center; gap:6px;">
                         <img src="${hat.image}" style="width:44px; height:44px; border-radius:6px; object-fit:cover;">
                         <span style="font-size:0.78rem; color:var(--text-secondary);">${hat.subCategory || '帽子'}</span>
                     </div>`).join('')}
                </div>`
-            : `<p style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">クローゼットに帽子を登録すると具体的に提案できます。</p>`;
+            : `<p style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">クローゼットに「${hatRec.type}」を登録すると具体的に提案できます。</p>`;
         hatHtml = `
-            <div style="background:var(--primary-light); border:1px solid rgba(245,158,11,0.3); padding:12px; border-radius:10px; margin-bottom:16px;">
+            <div style="background:var(--primary-light); border:1px solid rgba(245,158,11,0.25); padding:12px; border-radius:10px; margin-bottom:16px;">
                 <p style="font-weight:bold; color:#b45309; margin-bottom:4px; font-size:0.9rem;">
-                    ☀️ 帽子がおすすめです
+                    🎩 ${hatRec.type}がおすすめ
                 </p>
-                <p style="font-size:0.82rem; color:var(--text-secondary);">今日は${outfit.condition}のため、日差し対策に帽子を合わせると良いでしょう。</p>
+                <p style="font-size:0.82rem; color:var(--text-secondary);">${hatRec.reason}</p>
                 ${hatItemHtml}
             </div>`;
     }
