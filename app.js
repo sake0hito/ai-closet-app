@@ -206,24 +206,63 @@ document.getElementById('btn-google-login').addEventListener('click', async () =
     } catch(e) { authError.textContent = "Googleログインに失敗しました: " + e.message; }
 });
 
+// Firebase Auth エラーを日本語で表示
+function getAuthErrorMessage(e) {
+    const code = e.code || '';
+    const map = {
+        'auth/operation-not-allowed':
+            '⚠️ メール/パスワード認証が無効です。\nFirebase Console → Authentication → Sign-in method → Email/Password を有効にしてください。',
+        'auth/email-already-in-use':
+            'このメールアドレスはすでに登録されています。ログインをお試しください。',
+        'auth/weak-password':
+            'パスワードは6文字以上で入力してください。',
+        'auth/user-not-found':
+            'このメールアドレスは登録されていません。新規登録をお試しください。',
+        'auth/wrong-password':
+            'パスワードが正しくありません。',
+        'auth/invalid-email':
+            'メールアドレスの形式が正しくありません。',
+        'auth/invalid-credential':
+            'メールアドレスまたはパスワードが正しくありません。',
+        'auth/too-many-requests':
+            'ログイン試行が多すぎます。しばらく待ってからお試しください。',
+        'auth/network-request-failed':
+            'ネットワークエラーが発生しました。接続を確認してください。',
+        'auth/configuration-not-found':
+            '⚠️ Firebase の設定に問題があります。メール認証が有効か確認してください。',
+    };
+    return map[code] || `エラー (${code || e.message})`;
+}
+
 document.getElementById('btn-email-register').addEventListener('click', async () => {
     authError.textContent = "";
-    const email = document.getElementById('auth-email').value;
-    const pass = document.getElementById('auth-password').value;
+    const email = document.getElementById('auth-email').value.trim();
+    const pass  = document.getElementById('auth-password').value;
     if (!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
+    if (pass.length < 6)  { authError.textContent = "パスワードは6文字以上で入力してください"; return; }
+    const btn = document.getElementById('btn-email-register');
+    btn.disabled = true; btn.textContent = '登録中...';
     try {
         await createUserWithEmailAndPassword(auth, email, pass);
-    } catch(e) { authError.textContent = "登録エラー: " + e.message; }
+    } catch(e) {
+        authError.textContent = getAuthErrorMessage(e);
+        btn.disabled = false; btn.textContent = '新規登録';
+    }
 });
 
 document.getElementById('btn-email-login').addEventListener('click', async () => {
     authError.textContent = "";
-    const email = document.getElementById('auth-email').value;
-    const pass = document.getElementById('auth-password').value;
+    const email = document.getElementById('auth-email').value.trim();
+    const pass  = document.getElementById('auth-password').value;
     if (!email || !pass) { authError.textContent = "メールアドレスとパスワードを入力してください"; return; }
+    const btn = document.getElementById('btn-email-login');
+    btn.disabled = true; btn.textContent = 'ログイン中...';
     try {
         await signInWithEmailAndPassword(auth, email, pass);
-    } catch(e) { authError.textContent = "ログインエラー: " + e.message; }
+    } catch(e) {
+        authError.textContent = getAuthErrorMessage(e);
+        btn.disabled = false; btn.textContent = 'ログイン';
+    }
 });
 
 window.logout = async function() {
@@ -831,6 +870,15 @@ const routes = {
                         ⚠️ 「このアプリはGoogleに確認されていません」と表示された場合は、「詳細」→「sake0hito.github.ioに移動」をクリックして続行できます。
                     </div>
                 `}
+            </div>
+
+            <div class="card mt-4">
+                <h3 class="section-title">🤖 AI接続テスト</h3>
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">AIチャットや服の解析が動かない場合、ここで原因を確認できます。</p>
+                <button type="button" onclick="testAIConnection()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;" id="btn-ai-test">
+                    <i data-lucide="wifi" class="inline-icon"></i> AIをテストする
+                </button>
+                <div id="ai-test-result" style="display:none; margin-top:12px; background:var(--surface-solid); border-radius:8px; padding:12px; font-size:0.85rem; line-height:1.6;"></div>
             </div>
 
             <div style="text-align:center; margin-top:32px; padding-bottom:16px;">
@@ -2032,6 +2080,52 @@ function updateThemeButtons() {
         if (themes[i] === currentTheme) b.classList.add('active');
     });
 }
+
+window.testAIConnection = async function() {
+    const resultEl = document.getElementById('ai-test-result');
+    const btn = document.getElementById('btn-ai-test');
+    if (!resultEl) return;
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = '<i data-lucide="loader" class="spinner inline-icon"></i> テスト中...';
+    if (btn) { btn.disabled = true; }
+    lucide.createIcons();
+
+    try {
+        const res = await callGemini('「テスト成功」とだけ日本語で返してください。');
+        if (res) {
+            resultEl.innerHTML =
+                `<span style="color:#10b981; font-weight:bold;">✅ AI接続成功！</span><br>` +
+                `<span style="color:var(--text-secondary);">返答: ${res}</span>`;
+        } else {
+            resultEl.innerHTML =
+                `<span style="color:#f59e0b; font-weight:bold;">⚠️ 接続できましたが返答が空でした</span>`;
+        }
+    } catch(e) {
+        const msg = e.message || '';
+        let detail = msg;
+        let hint = '';
+
+        if (msg.includes('403') || msg.toLowerCase().includes('forbidden')) {
+            hint = '💡 Cloudflare WorkerのURL、またはALLOWED_ORIGINの設定を確認してください。';
+        } else if (msg.includes('400') || msg.toLowerCase().includes('api key')) {
+            hint = '💡 Cloudflare WorkerにGEMINI_API_KEYシークレットが正しく設定されているか確認してください。Workerを再デプロイすると反映されます。';
+        } else if (msg.includes('500') || msg.includes('502')) {
+            hint = '💡 CloudflareのWorkerが正しくデプロイされているか確認してください。';
+        } else if (msg.toLowerCase().includes('failed to fetch') || msg.includes('network')) {
+            hint = '💡 Worker URLが正しいか、またはWorkerが稼働中か確認してください。';
+        } else {
+            hint = '💡 Cloudflare Dashboard → Workers → ai-closet-gemini → Settings → Variables and Secrets でGEMINI_API_KEYが設定されているか確認してください。';
+        }
+
+        resultEl.innerHTML =
+            `<span style="color:#ef4444; font-weight:bold;">❌ AI接続エラー</span><br>` +
+            `<span style="font-size:0.8rem; color:var(--text-secondary);">${detail}</span>` +
+            (hint ? `<br><br><span style="font-size:0.8rem; color:#f59e0b;">${hint}</span>` : '');
+    }
+
+    if (btn) { btn.disabled = false; }
+    lucide.createIcons();
+};
 
 window.connectGoogleCalendar = function() {
     if (!googleTokenClient) {
