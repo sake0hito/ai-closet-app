@@ -81,6 +81,7 @@ let currentTargetSlot = null;
 let currentEditData = {};
 let styleChartInstance = null;
 let historyView = localStorage.getItem('history_view') || 'list'; // 'list' | 'calendar'
+let historySortOrder = localStorage.getItem('history_sort') || 'newest'; // 'newest' | 'oldest'
 let calendarMonth = new Date();
 
 // チャット履歴（ページ内のみ保持）
@@ -105,14 +106,18 @@ const authError = document.getElementById('auth-error');
 // Gemini AI API（Cloudflare Workers 経由）
 // =============================================
 async function callGemini(prompt, imageBase64 = null) {
-    const base64Data = imageBase64
-        ? imageBase64.replace(/^data:image\/\w+;base64,/, '')
-        : null;
+    let base64Data = null;
+    let mimeType = 'image/jpeg';
+    if (imageBase64) {
+        const mimeMatch = imageBase64.match(/^data:(image\/[\w+]+);base64,/);
+        if (mimeMatch) mimeType = mimeMatch[1];
+        base64Data = imageBase64.replace(/^data:image\/[\w+]+;base64,/, '');
+    }
 
     const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, imageBase64: base64Data })
+        body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType })
     });
 
     if (!response.ok) {
@@ -400,36 +405,79 @@ function initStyleChart() {
 }
 
 // =============================================
-// 週間コーデ生成（所持服優先・前日被り防止）
+// 週間コーデ生成（所持服優先・前日被り防止・履歴反映）
 // =============================================
 function generateWeeklyOutfitsFromCloset() {
-    if (closetItems.length === 0) return;
+    if (closetItems.length === 0 && wearHistory.length === 0) return;
 
     const tops      = closetItems.filter(i => i.category === 'トップス・アウター');
     const bottoms   = closetItems.filter(i => i.category === 'ボトムス');
     const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス');
 
-    // 直近の着用履歴IDセット（被り回避）
-    const recentIds = new Set(wearHistory.slice(0, 14).map(h => h.closetItemId).filter(Boolean));
+    // 直近の着用履歴IDセット（被り回避）：新旧スキーマ対応
+    const recentIds = new Set(wearHistory.slice(0, 14).flatMap(h =>
+        h.items ? h.items.map(it => it.closetItemId) : [h.closetItemId]
+    ).filter(Boolean));
+
+    // 着用履歴プール（Day2以降に使用）
+    const historyPool = wearHistory.filter(h => {
+        const display = getHistoryDisplayData(h);
+        return display.images.length > 0;
+    }).slice(0, 14);
+    const usedHistoryIds = new Set();
 
     let prevTopsId    = null;
     let prevBottomsId = null;
     let prevOpId      = null;
 
-    weeklyOutfits.forEach(outfit => {
+    weeklyOutfits.forEach((outfit, index) => {
         const weather = outfit.temp !== '--°C' ? `気温${outfit.temp}・${outfit.condition}` : '';
 
-        // ワンピース候補（前日・最近着用を除く）
-        const opCandidates = onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id));
-        // トップス候補（前日・最近着用を除く）
-        const topsCandidates = tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id));
+        // Day2以降は着用履歴からのコーデも候補に（50%の確率）
+        if (index > 0 && historyPool.length > 0) {
+            const availHistory = historyPool.filter(h => !usedHistoryIds.has(h.id));
+            if (availHistory.length > 0 && Math.random() < 0.5) {
+                const h = availHistory[Math.floor(Math.random() * availHistory.length)];
+                usedHistoryIds.add(h.id);
+                const display = getHistoryDisplayData(h);
+
+                // topsImage / bottomsImage を履歴から取得
+                let topsImage = null, bottomsImage = null;
+                if (h.items && h.items.length > 0) {
+                    const topsItem = h.items.find(it =>
+                        it.category === 'トップス・アウター' || it.category === 'ワンピース' || it.category === 'ドレス');
+                    const bottomsItem = h.items.find(it => it.category === 'ボトムス');
+                    topsImage    = topsItem?.image || display.images[0];
+                    bottomsImage = bottomsItem?.image || null;
+                } else {
+                    topsImage = display.images[0] || null;
+                }
+
+                outfit.image        = topsImage || display.images[0];
+                outfit.topsImage    = topsImage;
+                outfit.bottomsImage = bottomsImage;
+                outfit.isFromHistory = true;
+                outfit.tags = outfit.tags.length > 0 ? outfit.tags : ['過去の着用'];
+                const label = h.occasion || h.dateStr || '過去の着用';
+                outfit.reason = `${weather ? weather + 'に合う、' : ''}過去に記録したコーデ（${label}）の提案です。`;
+                return;
+            }
+        }
+
+        outfit.isFromHistory = false;
+
+        // クローゼットベースのコーデ生成
+        const opCandidates    = onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id));
+        const topsCandidates  = tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id));
         const bottomsCandidates = bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id));
 
         const useOnepiece = opCandidates.length > 0 && (topsCandidates.length === 0 || Math.random() < 0.25);
 
         if (useOnepiece) {
             const op = opCandidates[Math.floor(Math.random() * opCandidates.length)];
-            outfit.image = op.image;
+            outfit.image        = op.image;
+            outfit.topsImage    = op.image;
+            outfit.bottomsImage = null;
             outfit.tags  = [...new Set([
                 ...(op.styles  || []).map(s => s.replace('系', '')),
                 ...(op.seasons || [])
@@ -440,7 +488,9 @@ function generateWeeklyOutfitsFromCloset() {
             const t = topsCandidates[Math.floor(Math.random() * topsCandidates.length)];
             const bPool = bottomsCandidates.length > 0 ? bottomsCandidates : bottoms;
             const b = bPool.length > 0 ? bPool[Math.floor(Math.random() * bPool.length)] : null;
-            outfit.image = t.image;
+            outfit.image        = t.image;
+            outfit.topsImage    = t.image;
+            outfit.bottomsImage = b?.image || null;
             const styleTags = [...new Set([
                 ...(t.styles || []).map(s => s.replace('系', '')),
                 ...(b ? (b.styles || []).map(s => s.replace('系', '')) : [])
@@ -572,6 +622,14 @@ const routes = {
             `;
 
             weeklyOutfits.forEach((outfit, index) => {
+                // トップス＋ボトムスを横並び表示
+                const thumbHtml = (outfit.topsImage && outfit.bottomsImage)
+                    ? `<div style="display:flex; gap:2px; height:200px; overflow:hidden;">
+                           <img src="${outfit.topsImage}" alt="tops" style="flex:1; object-fit:cover; min-width:0;">
+                           <img src="${outfit.bottomsImage}" alt="bottoms" style="flex:1; object-fit:cover; min-width:0;">
+                       </div>`
+                    : `<img src="${outfit.topsImage || outfit.image}" alt="Outfit" class="outfit-image" style="height:200px;" />`;
+
                 html += `
                 <div class="carousel-item">
                     <div class="card outfit-card" onclick="openOutfitDetails(${index})">
@@ -579,9 +637,9 @@ const routes = {
                             <span>${outfit.dateStr}</span>
                             <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.temp}</span>
                         </div>
-                        <img src="${outfit.image}" alt="Outfit" class="outfit-image" style="height:200px;" />
+                        ${thumbHtml}
                         <div class="outfit-details">
-                            <h4 class="mb-4">${outfit.title}</h4>
+                            <h4 class="mb-4">${outfit.isFromHistory ? '📅 ' : ''}${outfit.title}</h4>
                             <div style="display:flex; flex-wrap:wrap; gap:4px;">${outfit.tags.map(tag => `<span class="tag-small">${tag}</span>`).join('')}</div>
                             <p class="mt-4" style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4;">
                                 <i data-lucide="sparkles" class="inline-icon" style="color: var(--accent-color);"></i>
@@ -835,15 +893,31 @@ window.saveToHistory = async function(index) {
     closeModal();
     const now = new Date();
     const dateStr = now.toLocaleDateString('ja-JP', {month: 'long', day: 'numeric'}) + " 着用";
+    const isoDate = now.toISOString().split('T')[0];
+
+    // 新スキーマ: items配列で保存
+    const items = [];
+    if (outfit.topsImage) {
+        items.push({ image: outfit.topsImage, category: 'トップス・アウター', subCategory: '', title: outfit.title });
+    }
+    if (outfit.bottomsImage) {
+        items.push({ image: outfit.bottomsImage, category: 'ボトムス', subCategory: '', title: 'ボトムス' });
+    }
+    if (items.length === 0 && outfit.image) {
+        items.push({ image: outfit.image, category: 'コーデ', subCategory: '', title: outfit.title });
+    }
+
     try {
-        const docRef = await addDoc(collection(db, "history"), {
+        const docData = {
             userId: currentUser.uid,
-            title: outfit.title,
-            image: outfit.image,
-            dateStr: dateStr,
+            dateStr, isoDate,
+            occasion: '',
+            items,
+            memo: '',
             createdAt: now.getTime()
-        });
-        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title: outfit.title, image: outfit.image, dateStr, createdAt: now.getTime() });
+        };
+        const docRef = await addDoc(collection(db, "history"), docData);
+        wearHistory.unshift({ id: docRef.id, ...docData });
         alert("履歴に保存しました！");
     } catch (e) {
         alert("履歴の保存に失敗しました。");
@@ -853,18 +927,55 @@ window.saveToHistory = async function(index) {
 
 window.openOutfitDetails = function(index) {
     const outfit = weeklyOutfits[index];
+
+    // トップス＋ボトムスの横並び表示
+    let imageHtml;
+    if (outfit.topsImage && outfit.bottomsImage) {
+        imageHtml = `<div style="display:flex; gap:3px; height:240px; border-radius:12px; overflow:hidden; margin-bottom:16px;">
+            <img src="${outfit.topsImage}" alt="tops" style="flex:1; object-fit:cover; min-width:0;">
+            <img src="${outfit.bottomsImage}" alt="bottoms" style="flex:1; object-fit:cover; min-width:0;">
+        </div>`;
+    } else {
+        imageHtml = `<img src="${outfit.topsImage || outfit.image}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">`;
+    }
+
+    // 晴れ・日差し強い日の帽子レコメンド
+    const isSunny = outfit.condition === '快晴' || outfit.condition === '晴れ';
+    let hatHtml = '';
+    if (isSunny) {
+        const hats = closetItems.filter(i => i.category === '帽子');
+        const hatItemHtml = hats.length > 0
+            ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+                ${hats.slice(0, 3).map(hat => `
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <img src="${hat.image}" style="width:44px; height:44px; border-radius:6px; object-fit:cover;">
+                        <span style="font-size:0.78rem; color:var(--text-secondary);">${hat.subCategory || '帽子'}</span>
+                    </div>`).join('')}
+               </div>`
+            : `<p style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">クローゼットに帽子を登録すると具体的に提案できます。</p>`;
+        hatHtml = `
+            <div style="background:var(--primary-light); border:1px solid rgba(245,158,11,0.3); padding:12px; border-radius:10px; margin-bottom:16px;">
+                <p style="font-weight:bold; color:#b45309; margin-bottom:4px; font-size:0.9rem;">
+                    ☀️ 帽子がおすすめです
+                </p>
+                <p style="font-size:0.82rem; color:var(--text-secondary);">今日は${outfit.condition}のため、日差し対策に帽子を合わせると良いでしょう。</p>
+                ${hatItemHtml}
+            </div>`;
+    }
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">${outfit.title}</h3>
-            <img src="${outfit.image}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">
+            ${imageHtml}
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
                 ${outfit.tags.map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
-            <p style="font-size:0.9rem; color:var(--text-secondary); line-height:1.6; margin-bottom:24px;">
+            <p style="font-size:0.9rem; color:var(--text-secondary); line-height:1.6; margin-bottom:16px;">
                 <i data-lucide="sparkles" class="inline-icon" style="color:var(--accent-color);"></i>
                 ${outfit.reason}
             </p>
+            ${hatHtml}
             <button onclick="saveToHistory(${index})" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
                 今日着た！履歴に残す
             </button>
@@ -1431,6 +1542,19 @@ window.analyzeCoordination = async function() {
 // 着用履歴 表示・詳細・編集・削除・追加
 // =============================================
 
+// 旧スキーマ（title/image/closetItemId）と新スキーマ（items[]）の両対応
+function getHistoryDisplayData(h) {
+    if (h.items && h.items.length > 0) {
+        const imgs = h.items.map(it => it.image).filter(Boolean);
+        const title = h.items.map(it => it.title || it.subCategory || it.category).filter(Boolean).join(' × ') || 'コーデ記録';
+        return { images: imgs, title, occasion: h.occasion || '' };
+    } else {
+        // 旧スキーマ（後方互換）
+        const img = h.image || null;
+        return { images: img ? [img] : [], title: h.title || 'コーデ記録', occasion: '' };
+    }
+}
+
 window.setHistoryView = function(view) {
     historyView = view;
     localStorage.setItem('history_view', view);
@@ -1441,24 +1565,48 @@ function renderHistoryList() {
     if (wearHistory.length === 0) {
         return `<div class="card"><p style="color:var(--text-secondary); font-size:0.9rem;">まだ履歴がありません。<br>ホーム画面のコーデから「今日着た！」を押すか、上のボタンから手動で記録できます。</p></div>`;
     }
-    let html = `<div class="card"><div style="display:flex; flex-direction:column; gap:16px;">`;
-    wearHistory.forEach(h => {
+
+    // ソート（新しい順がデフォルト）
+    const sorted = [...wearHistory].sort((a, b) =>
+        historySortOrder === 'newest' ? b.createdAt - a.createdAt : a.createdAt - b.createdAt
+    );
+
+    let html = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span style="font-size:0.8rem; color:var(--text-secondary);">${wearHistory.length}件の記録</span>
+        <button onclick="toggleHistorySort()" style="background:none; border:1px solid var(--primary-color); color:var(--primary-color); border-radius:20px; padding:4px 12px; font-size:0.78rem; cursor:pointer; font-weight:600;">
+            ${historySortOrder === 'newest' ? '↓ 新しい順' : '↑ 古い順'}
+        </button>
+    </div>
+    <div class="card"><div style="display:flex; flex-direction:column; gap:14px;">`;
+
+    sorted.forEach(h => {
+        const display = getHistoryDisplayData(h);
+        const thumbSize = display.images.length > 1 ? '52px' : '72px';
+        const thumbsHtml = display.images.slice(0, 3).map(img =>
+            `<img src="${img}" style="width:${thumbSize}; height:72px; border-radius:8px; object-fit:cover; cursor:pointer;" onclick="openHistoryDetail('${h.id}')" alt="outfit">`
+        ).join('');
+        const occasionBadge = display.occasion
+            ? `<span style="font-size:0.7rem; background:var(--primary-light); color:var(--primary-color); border-radius:10px; padding:1px 7px; margin-left:4px;">${display.occasion}</span>`
+            : '';
+
         html += `
-        <div style="display:flex; gap:12px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
-            <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=80'}"
-                style="width:72px; height:72px; border-radius:8px; object-fit:cover; flex-shrink:0; cursor:pointer;"
-                onclick="openHistoryDetail('${h.id}')" alt="outfit">
+        <div style="display:flex; gap:10px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
+            <div style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
             <div style="flex:1; min-width:0; cursor:pointer;" onclick="openHistoryDetail('${h.id}')">
                 <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
-                <p style="font-size:0.9rem; font-weight:bold; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${h.title}</p>
-                ${h.memo ? `<p style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${h.memo}</p>` : ''}
+                <div style="display:flex; align-items:center; flex-wrap:wrap; margin-top:3px;">
+                    <p style="font-size:0.88rem; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:calc(100% - 60px);">${display.title}</p>
+                    ${occasionBadge}
+                </div>
+                ${h.memo ? `<p style="font-size:0.73rem; color:var(--text-secondary); margin-top:2px;">${h.memo}</p>` : ''}
             </div>
-            <div style="display:flex; flex-direction:column; gap:4px; flex-shrink:0;">
+            <div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;">
                 <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer; padding:6px;">
-                    <i data-lucide="pencil" style="width:16px; height:16px;"></i>
+                    <i data-lucide="pencil" style="width:15px; height:15px;"></i>
                 </button>
                 <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:6px;">
-                    <i data-lucide="trash-2" style="width:16px; height:16px;"></i>
+                    <i data-lucide="trash-2" style="width:15px; height:15px;"></i>
                 </button>
             </div>
         </div>`;
@@ -1466,6 +1614,12 @@ function renderHistoryList() {
     html += `</div></div>`;
     return html;
 }
+
+window.toggleHistorySort = function() {
+    historySortOrder = historySortOrder === 'newest' ? 'oldest' : 'newest';
+    localStorage.setItem('history_sort', historySortOrder);
+    navigate('history');
+};
 
 function renderHistoryCalendar() {
     const y = calendarMonth.getFullYear();
@@ -1545,7 +1699,7 @@ window.openHistoryDayModal = function(iso) {
                         <p style="font-weight:bold;">${h.title}</p>
                         ${h.memo ? `<p style="font-size:0.8rem; color:var(--text-secondary);">${h.memo}</p>` : ''}
                     </div>
-                    <button onclick="openHistoryEdit('${h.id}'); closeModal();" style="background:none; border:none; color:var(--primary-color); cursor:pointer;">
+                    <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer;">
                         <i data-lucide="pencil" style="width:16px; height:16px;"></i>
                     </button>
                 </div>`).join('')}
@@ -1561,16 +1715,34 @@ window.openHistoryDayModal = function(iso) {
 window.openHistoryDetail = function(id) {
     const h = wearHistory.find(x => x.id === id);
     if (!h) return;
+    const display = getHistoryDisplayData(h);
+
+    // 複数画像を横並びで表示
+    let imagesHtml;
+    if (display.images.length > 1) {
+        imagesHtml = `<div style="display:flex; gap:4px; height:200px; border-radius:12px; overflow:hidden; margin-bottom:16px;">
+            ${display.images.slice(0, 3).map(img =>
+                `<img src="${img}" style="flex:1; object-fit:cover; min-width:0;" alt="outfit">`).join('')}
+        </div>`;
+    } else {
+        const img = display.images[0] || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400';
+        imagesHtml = `<img src="${img}" style="width:100%; height:200px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">`;
+    }
+
+    const occasionBadge = display.occasion
+        ? `<span style="font-size:0.75rem; background:var(--primary-light); color:var(--primary-color); border-radius:12px; padding:2px 10px; display:inline-block; margin-bottom:8px;">${display.occasion}</span>`
+        : '';
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">着用詳細</h3>
-            <img src="${h.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400'}"
-                style="width:100%; height:200px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
+            ${imagesHtml}
             <p style="font-size:0.8rem; color:var(--primary-color); font-weight:bold; margin-bottom:6px;">${h.dateStr}</p>
-            <p style="font-size:1rem; font-weight:bold; margin-bottom:8px;">${h.title}</p>
+            ${occasionBadge}
+            <p style="font-size:1rem; font-weight:bold; margin-bottom:8px;">${display.title}</p>
             ${h.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${h.memo}</p>` : ''}
-            <button onclick="openHistoryEdit('${h.id}'); closeModal();" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
+            <button onclick="openHistoryEdit('${h.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
                 編集する
             </button>
             <button onclick="deleteHistoryItem('${h.id}'); closeModal();" style="width:100%; background:transparent; color:#ef4444; border:1px solid #ef4444; padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
@@ -1585,26 +1757,34 @@ window.openHistoryDetail = function(id) {
 };
 
 window.openHistoryEdit = function(id) {
+    closeModal(); // 詳細モーダルを閉じてから編集モーダルを開く
     const h = wearHistory.find(x => x.id === id);
     if (!h) return;
-    // createdAtからdateInputの値を作成
     const dateVal = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+    const display = getHistoryDisplayData(h);
+
+    // サムネイル表示
+    const thumbsHtml = display.images.length > 0
+        ? display.images.slice(0, 4).map(img =>
+            `<img src="${img}" style="width:60px; height:60px; border-radius:8px; object-fit:cover;">`).join('')
+        : `<span style="color:var(--text-secondary); font-size:0.85rem;">服の選択なし</span>`;
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
             <h3 class="section-title">着用履歴を編集</h3>
-            <img src="${h.image || ''}" style="width:100%; height:140px; object-fit:cover; border-radius:12px; margin-bottom:16px;">
+            <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">${thumbsHtml}</div>
             <div class="form-group">
                 <label style="font-weight:600; font-size:0.9rem;">着用日</label>
                 <input type="date" id="edit-history-date" class="input-field" value="${dateVal}" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">タイトル</label>
-                <input type="text" id="edit-history-title" class="input-field" value="${h.title}" style="margin-top:6px;">
+                <label style="font-weight:600; font-size:0.9rem;">シーン（任意）</label>
+                <input type="text" id="edit-history-occasion" class="input-field" value="${h.occasion || ''}" placeholder="例：仕事、デートなど" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">メモ</label>
-                <input type="text" id="edit-history-memo" class="input-field" value="${h.memo || ''}" placeholder="例：仕事、デートなど" style="margin-top:6px;">
+                <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
+                <input type="text" id="edit-history-memo" class="input-field" value="${h.memo || ''}" placeholder="例：暑かった、気に入った組み合わせ" style="margin-top:6px;">
             </div>
             <button onclick="saveHistoryEdit('${id}')" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
             <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
@@ -1616,19 +1796,19 @@ window.openHistoryEdit = function(id) {
 };
 
 window.saveHistoryEdit = async function(id) {
-    const dateInput = document.getElementById('edit-history-date')?.value;
-    const title = document.getElementById('edit-history-title')?.value?.trim();
-    const memo  = document.getElementById('edit-history-memo')?.value?.trim() || '';
-    if (!dateInput || !title) { alert('着用日とタイトルを入力してください。'); return; }
+    const dateInput  = document.getElementById('edit-history-date')?.value;
+    const occasion   = document.getElementById('edit-history-occasion')?.value?.trim() || '';
+    const memo       = document.getElementById('edit-history-memo')?.value?.trim() || '';
+    if (!dateInput) { alert('着用日を入力してください。'); return; }
 
     const dateObj = new Date(dateInput);
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
     const isoDate = dateInput;
 
     try {
-        await updateDoc(doc(db, "history", id), { title, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        await updateDoc(doc(db, "history", id), { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
         const idx = wearHistory.findIndex(h => h.id === id);
-        if (idx !== -1) Object.assign(wearHistory[idx], { title, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        if (idx !== -1) Object.assign(wearHistory[idx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
         closeModal();
         navigate('history');
@@ -1655,6 +1835,7 @@ window.deleteHistoryItem = async function(id) {
 
 window.openAddHistoryModal = function() {
     const today = new Date().toISOString().split('T')[0];
+    selectedHistoryItems = new Set(); // リセット
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
@@ -1664,18 +1845,23 @@ window.openAddHistoryModal = function() {
                 <input type="date" id="history-date" class="input-field" value="${today}" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
-                <input type="text" id="history-memo" class="input-field" placeholder="例：仕事、デートなど" style="margin-top:6px;">
+                <label style="font-weight:600; font-size:0.9rem;">シーン（任意）</label>
+                <input type="text" id="history-occasion" class="input-field" placeholder="例：仕事、デート、普段着など" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">服を選ぶ（任意）</label>
-                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットから選択（省略可）</p>
+                <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
+                <input type="text" id="history-memo" class="input-field" placeholder="例：暑かった、気に入った組み合わせ" style="margin-top:6px;">
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">服を選ぶ（複数選択可）</label>
+                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットからタップして選択（省略可）</p>
                 <div class="closet-grid" style="max-height:240px; overflow-y:auto;">
                     ${closetItems.length === 0
                         ? '<p style="color:var(--text-secondary); font-size:0.85rem;">クローゼットに服がありません</p>'
                         : closetItems.map(item => `
                             <div class="closet-item" id="hist-item-${item.id}" onclick="toggleHistoryItem('${item.id}')" style="cursor:pointer;">
                                 <img src="${item.image}" alt="">
+                                <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
                             </div>`).join('')
                     }
                 </div>
@@ -1689,14 +1875,13 @@ window.openAddHistoryModal = function() {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
-let selectedHistoryItemId = null;
+let selectedHistoryItems = new Set(); // 複数選択対応
 window.toggleHistoryItem = function(id) {
-    if (selectedHistoryItemId === id) {
-        selectedHistoryItemId = null;
-        document.querySelectorAll('.closet-item').forEach(el => el.classList.remove('selected'));
+    if (selectedHistoryItems.has(id)) {
+        selectedHistoryItems.delete(id);
+        document.getElementById('hist-item-' + id)?.classList.remove('selected');
     } else {
-        selectedHistoryItemId = id;
-        document.querySelectorAll('.closet-item').forEach(el => el.classList.remove('selected'));
+        selectedHistoryItems.add(id);
         document.getElementById('hist-item-' + id)?.classList.add('selected');
     }
 };
@@ -1704,30 +1889,37 @@ window.toggleHistoryItem = function(id) {
 window.saveManualHistory = async function() {
     if (!currentUser) return;
     const dateInput = document.getElementById('history-date')?.value;
-    const memo = document.getElementById('history-memo')?.value?.trim() || '';
+    const occasion  = document.getElementById('history-occasion')?.value?.trim() || '';
+    const memo      = document.getElementById('history-memo')?.value?.trim() || '';
     if (!dateInput) { alert('着用日を入力してください。'); return; }
 
     const dateObj = new Date(dateInput);
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
+    const isoDate = dateInput;
 
-    const selectedItem = selectedHistoryItemId ? closetItems.find(i => i.id === selectedHistoryItemId) : null;
-    const image = selectedItem?.image || 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&auto=format&fit=crop';
-    const title = selectedItem
-        ? (selectedItem.subCategory || selectedItem.category)
-        : (memo || 'コーデ記録');
+    // 選択アイテムをitems配列に変換
+    const items = [...selectedHistoryItems].map(id => {
+        const ci = closetItems.find(i => i.id === id);
+        if (!ci) return null;
+        return {
+            closetItemId: ci.id,
+            image: ci.image,
+            category: ci.category,
+            subCategory: ci.subCategory || '',
+            title: ci.subCategory || ci.category
+        };
+    }).filter(Boolean);
 
     try {
-        const isoDate = dateInput;
-        const docRef = await addDoc(collection(db, "history"), {
+        const docData = {
             userId: currentUser.uid,
-            title, image, dateStr, isoDate,
-            closetItemId: selectedItem?.id || null,
-            memo,
+            dateStr, isoDate, occasion, items, memo,
             createdAt: dateObj.getTime()
-        });
-        wearHistory.unshift({ id: docRef.id, userId: currentUser.uid, title, image, dateStr, isoDate, closetItemId: selectedItem?.id || null, memo, createdAt: dateObj.getTime() });
+        };
+        const docRef = await addDoc(collection(db, "history"), docData);
+        wearHistory.unshift({ id: docRef.id, ...docData });
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
-        selectedHistoryItemId = null;
+        selectedHistoryItems = new Set();
         closeModal();
         navigate('history');
     } catch(e) {
