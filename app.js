@@ -937,8 +937,14 @@ function getHatRecommendation(outfit) {
     // 天気・気温データ未取得時
     if (!temp || isNaN(temp) || outfit.temp === '--°C') return { recommend: false };
 
-    // 雨・雪の日は帽子より傘
-    if (condition === '雨' || condition === '雪') return { recommend: false };
+    // 雨の日は帽子より傘（雪の日はニット帽が有効なので続行）
+    if (condition === '雨') return { recommend: false };
+
+    // 氷点下（0°C未満）→ 季節・天候問わずニット帽必須
+    if (temp < 0) {
+        return { recommend: true, type: 'ニット帽', subTypes: ['ニット帽'],
+            reason: `氷点下${temp}°Cの極寒です。ニット帽で頭と耳をしっかり防寒しましょう。` };
+    }
 
     // 季節判定
     const isSpring = month >= 3 && month <= 5;
