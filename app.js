@@ -24,7 +24,7 @@ const storage = getStorage(app);
 // =============================================
 const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.googleusercontent.com";
 // Cloudflare Workers プロキシ URL
-const WORKER_URL = 'https://ai-closet-gemini.liyuandagui80.workers.dev';
+const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 
 const CATEGORIES = {
     "トップス・アウター": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター", "カーディガン", "ジャケット"],
