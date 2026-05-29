@@ -126,7 +126,7 @@ async function callGemini(prompt, imageBase64 = null) {
     }
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    return data.choices?.[0]?.message?.content || null;
 }
 
 // =============================================
