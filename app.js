@@ -40,6 +40,23 @@ const STYLES = ["カジュアル系", "きれいめ（シンプル）系", "エ�
 const SEASONS = ["春", "夏", "秋", "冬", "オールシーズン"];
 const CHART_COLORS = ['#0ea5e9','#f59e0b','#10b981','#f43f5e','#8b5cf6','#06b6d4','#ec4899','#f97316','#84cc16'];
 
+// 予定のキーワード → おすすめスタイル（カレンダー連動コーデ用）
+const EVENT_STYLE_MAP = [
+    { label: 'デート',     keywords: ['デート','ディナー','食事','ランチ','映画','カフェ','記念日'], styles: ['きれいめ（シンプル）系','フェミニン・ガーリー系','エレガント系'] },
+    { label: '仕事',       keywords: ['会議','仕事','打ち合わせ','商談','面接','プレゼン','出勤','ミーティング','研修'], styles: ['きれいめ（シンプル）系','フォーマル系','クール系'] },
+    { label: 'フォーマル', keywords: ['結婚式','披露宴','式典','パーティ','パーティー','セレモニー','卒業','入学','法事','お葬式'], styles: ['フォーマル系','エレガント系'] },
+    { label: 'アウトドア', keywords: ['アウトドア','ハイキング','登山','キャンプ','運動','ジム','スポーツ','ランニング','釣り','バーベキュー','BBQ'], styles: ['アウトドア系','カジュアル系','アメカジ系'] },
+    { label: 'お出かけ',   keywords: ['旅行','観光','お出かけ','ショッピング','買い物','遊び','散歩','お散歩'], styles: ['カジュアル系','ストリート系','アメカジ系'] },
+];
+
+function getEventStyle(eventText) {
+    if (!eventText) return null;
+    for (const e of EVENT_STYLE_MAP) {
+        if (e.keywords.some(k => eventText.includes(k))) return e;
+    }
+    return null;
+}
+
 // =============================================
 // アプリ状態
 // =============================================
@@ -47,6 +64,7 @@ let currentUser = null;
 let googleTokenClient;
 let isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
 let calendarEvents = {};
+let calendarStatusMsg = '';
 
 // 位置情報（localStorageにのみ保存、Firebaseには送らない）
 let userLocation = (() => {
@@ -304,11 +322,56 @@ async function fetchFirebaseData() {
 function updateWeeklyReasons() {
     weeklyOutfits.forEach(outfit => {
         const ev = calendarEvents[outfit.isoDate];
-        outfit.reason = ev
-            ? `予定「${ev}」と気温(${outfit.temp})に合わせて、${outfit.tags.join('・')}なコーデを提案します！`
-            : `気温(${outfit.temp})に最適な${outfit.tags.join('・')}なコーデを選びました！`;
+        if (ev) {
+            const es = getEventStyle(ev);
+            outfit.reason = es
+                ? `📅 予定「${ev}」に合わせた${es.label}コーデ。気温(${outfit.temp})も考慮しています。`
+                : `📅 予定「${ev}」と気温(${outfit.temp})に合わせて、${outfit.tags.join('・')}なコーデを提案します！`;
+        } else {
+            outfit.reason = `気温(${outfit.temp})に最適な${outfit.tags.join('・')}なコーデを選びました！`;
+        }
     });
     if (currentRoute === 'home') navigate('home');
+}
+
+// カレンダーの予定を取得して反映（初回連携・更新の両方で使用）
+async function fetchCalendarEvents(accessToken) {
+    try {
+        const timeMin = new Date().toISOString();
+        const timeMaxDate = new Date(); timeMaxDate.setDate(timeMaxDate.getDate() + 7);
+        const timeMax = timeMaxDate.toISOString();
+        const res = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`,
+            { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
+        if (!res.ok) {
+            calendarStatusMsg = `⚠️ 予定の取得に失敗しました（エラー${res.status}）。Calendar APIが有効か確認してください。`;
+            if (currentRoute === 'settings') navigate('settings');
+            return 0;
+        }
+        const data = await res.json();
+        calendarEvents = {};
+        if (data.items) {
+            data.items.forEach(item => {
+                const d = item.start.dateTime || item.start.date;
+                const iso = d.split('T')[0];
+                if (!calendarEvents[iso]) calendarEvents[iso] = item.summary;
+            });
+        }
+        const days = Object.keys(calendarEvents).length;
+        calendarStatusMsg = days > 0
+            ? `✅ ${days}日分の予定を読み込み、コーデに反映しました。`
+            : `📭 今後7日間に予定はありませんでした。`;
+        // 予定に合わせてコーデを選び直す
+        if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
+        else updateWeeklyReasons();
+        return days;
+    } catch (e) {
+        console.error(e);
+        calendarStatusMsg = '⚠️ 予定の取得中にエラーが発生しました。';
+        if (currentRoute === 'settings') navigate('settings');
+        return 0;
+    }
 }
 
 function initGoogleAuth() {
@@ -320,26 +383,7 @@ function initGoogleAuth() {
                 if (tokenResponse && tokenResponse.access_token) {
                     isCalendarConnected = true;
                     localStorage.setItem('google_calendar_connected', 'true');
-                    try {
-                        const timeMin = new Date().toISOString();
-                        const timeMaxDate = new Date(); timeMaxDate.setDate(timeMaxDate.getDate() + 7);
-                        const timeMax = timeMaxDate.toISOString();
-                        const res = await fetch(
-                            `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`,
-                            { headers: { 'Authorization': `Bearer ${tokenResponse.access_token}` } }
-                        );
-                        const data = await res.json();
-                        calendarEvents = {};
-                        if (data.items) {
-                            data.items.forEach(item => {
-                                const d = item.start.dateTime || item.start.date;
-                                const iso = d.split('T')[0];
-                                if (!calendarEvents[iso]) calendarEvents[iso] = item.summary;
-                            });
-                        }
-                        updateWeeklyReasons();
-                    } catch(e) { console.error(e); }
-                    alert("Googleカレンダーと連携しました！1週間の予定をコーデ提案に反映します。");
+                    await fetchCalendarEvents(tokenResponse.access_token);
                     if (currentRoute === 'settings' || currentRoute === 'home') navigate(currentRoute);
                 }
             },
@@ -505,10 +549,18 @@ function generateWeeklyOutfitsFromCloset() {
 
         outfit.isFromHistory = false;
 
+        // 予定があれば、その予定向きのスタイルを優先（カレンダー連動）
+        const eventStyle = getEventStyle(calendarEvents[outfit.isoDate]);
+        const prefer = (items) => {
+            if (!eventStyle) return items;
+            const m = items.filter(i => (i.styles || []).some(s => eventStyle.styles.includes(s)));
+            return m.length > 0 ? m : items; // 該当する服が無ければ通常通り全候補から
+        };
+
         // クローゼットベースのコーデ生成
-        const opCandidates    = onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id));
-        const topsCandidates  = tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id));
-        const bottomsCandidates = bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id));
+        const opCandidates    = prefer(onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id)));
+        const topsCandidates  = prefer(tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id)));
+        const bottomsCandidates = prefer(bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id)));
 
         const useOnepiece = opCandidates.length > 0 && (topsCandidates.length === 0 || Math.random() < 0.25);
 
@@ -540,6 +592,15 @@ function generateWeeklyOutfitsFromCloset() {
                 : `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」を使ったコーデです。`;
             prevTopsId    = t.id;
             prevBottomsId = b ? b.id : prevBottomsId;
+        }
+    });
+
+    // 予定がある日は、コーデ理由に予定情報を添える
+    weeklyOutfits.forEach(outfit => {
+        const ev = calendarEvents[outfit.isoDate];
+        if (ev && outfit.reason && outfit.reason.indexOf('予定') === -1) {
+            const es = getEventStyle(ev);
+            outfit.reason = `📅 予定「${ev}」${es ? `に合わせた${es.label}コーデ。 ` : 'の日。 '}` + outfit.reason;
         }
     });
 
@@ -676,6 +737,7 @@ const routes = {
                             <span>${outfit.dateStr}</span>
                             <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.temp}</span>
                         </div>
+                        ${calendarEvents[outfit.isoDate] ? `<div style="padding:6px 12px; background:var(--accent-color); color:#fff; font-size:0.78rem; font-weight:600; display:flex; align-items:center; gap:6px;"><i data-lucide="calendar-check" class="inline-icon"></i>予定: ${calendarEvents[outfit.isoDate]}</div>` : ''}
                         ${thumbHtml}
                         <div class="outfit-details">
                             <h4 class="mb-4">${outfit.isFromHistory ? '📅 ' : ''}${outfit.title}</h4>
@@ -707,6 +769,7 @@ const routes = {
             <div class="card" style="padding:16px;">
                 <div class="quick-prompts">
                     <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
+                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('予定に関係なく、気分が上がるおすすめコーデを提案して')">気分でコーデ</button>
                     <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
                     <button class="quick-prompt-btn" onclick="sendQuickPrompt('私のクローゼットのスタイル傾向を教えて')">傾向分析</button>
                 </div>
@@ -858,9 +921,16 @@ const routes = {
             <div class="card mt-4">
                 <h3 class="section-title">📅 Googleカレンダー連携</h3>
                 ${isCalendarConnected ? `
-                    <div style="display:flex; align-items:center; gap:8px; padding:12px; background:var(--primary-light); border-radius:8px; color:var(--primary-color);">
+                    <div style="display:flex; align-items:center; gap:8px; padding:12px; background:var(--primary-light); border-radius:8px; color:var(--primary-color); margin-bottom:12px;">
                         <i data-lucide="check-circle" class="inline-icon"></i> Googleカレンダー連携済み
                     </div>
+                    ${calendarStatusMsg
+                        ? `<div class="info-box" style="margin-bottom:12px;">${calendarStatusMsg}</div>`
+                        : `<div class="info-box" style="margin-bottom:12px;">「予定を更新」を押すと、最新のカレンダーの予定をコーデに反映します。</div>`}
+                    <button onclick="refreshCalendar()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px;">
+                        <i data-lucide="refresh-cw" class="inline-icon"></i> 予定を更新
+                    </button>
+                    <button onclick="disconnectCalendar()" class="btn-outline text-danger" style="font-size:0.85rem; padding:10px;">連携を解除</button>
                 ` : `
                     <button class="btn-google" onclick="connectGoogleCalendar()">
                         <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
@@ -2133,6 +2203,27 @@ window.connectGoogleCalendar = function() {
         return;
     }
     googleTokenClient.requestAccessToken();
+};
+
+window.refreshCalendar = function() {
+    if (!googleTokenClient) {
+        alert("Google APIの準備中です。数秒後にお試しください。");
+        return;
+    }
+    calendarStatusMsg = "🔄 予定を更新中...";
+    if (currentRoute === 'settings') navigate('settings');
+    // prompt:'' = すでに許可済みなら確認画面を出さずに再取得
+    googleTokenClient.requestAccessToken({ prompt: '' });
+};
+
+window.disconnectCalendar = function() {
+    if (!confirm("Googleカレンダーの連携を解除しますか？")) return;
+    isCalendarConnected = false;
+    calendarEvents = {};
+    calendarStatusMsg = "";
+    localStorage.removeItem('google_calendar_connected');
+    if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
+    navigate('settings');
 };
 
 // =============================================
