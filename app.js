@@ -57,6 +57,18 @@ function getEventStyle(eventText) {
     return null;
 }
 
+// テーマ一覧（id=CSSクラス名、color=設定画面の色見本＆ブラウザ色）
+const THEMES = [
+    { id: 'morning',  name: '爽やか',     color: '#0ea5e9' },
+    { id: 'sunset',   name: '夕焼け',     color: '#f43f5e' },
+    { id: 'night',    name: 'ダーク',     color: '#818cf8' },
+    { id: 'forest',   name: '新緑',       color: '#10b981' },
+    { id: 'lavender', name: 'ラベンダー', color: '#8b5cf6' },
+    { id: 'sakura',   name: '桜',         color: '#ec4899' },
+    { id: 'ocean',    name: '海',         color: '#06b6d4' },
+    { id: 'mocha',    name: 'モカ',       color: '#b45309' },
+];
+
 // =============================================
 // アプリ状態
 // =============================================
@@ -890,9 +902,10 @@ const routes = {
             <div class="card">
                 <h3 class="section-title">テーマカラー</h3>
                 <div class="theme-selector">
-                    <button class="theme-btn" onclick="setTheme('morning')">爽やか</button>
-                    <button class="theme-btn" onclick="setTheme('sunset')">夕焼け</button>
-                    <button class="theme-btn" onclick="setTheme('night')">ダーク</button>
+                    ${THEMES.map(t => `
+                    <button class="theme-btn" data-theme="${t.id}" onclick="setTheme('${t.id}')">
+                        <span class="theme-dot" style="background:${t.color}"></span>${t.name}
+                    </button>`).join('')}
                 </div>
             </div>
 
@@ -2138,16 +2151,17 @@ window.closeModal = function() { modalContainer.classList.add('hidden'); };
 window.setTheme = function(themeName) {
     document.body.className = `theme-${themeName}`;
     localStorage.setItem('ai-closet-theme', themeName);
+    // スマホのブラウザUIの色（meta theme-color）もテーマに合わせる
+    const t = THEMES.find(x => x.id === themeName);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta && t) meta.setAttribute('content', t.color);
     updateThemeButtons();
 };
 
 function updateThemeButtons() {
     const currentTheme = localStorage.getItem('ai-closet-theme') || 'morning';
-    const btns = document.querySelectorAll('.theme-btn');
-    btns.forEach((b, i) => {
-        b.classList.remove('active');
-        const themes = ['morning', 'sunset', 'night'];
-        if (themes[i] === currentTheme) b.classList.add('active');
+    document.querySelectorAll('.theme-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.theme === currentTheme);
     });
 }
 
@@ -2231,7 +2245,7 @@ window.disconnectCalendar = function() {
 // =============================================
 function init() {
     const savedTheme = localStorage.getItem('ai-closet-theme') || 'morning';
-    document.body.className = `theme-${savedTheme}`;
+    window.setTheme(savedTheme);
     mainContent.style.transition = 'opacity 0.15s ease';
     setTimeout(() => { initGoogleAuth(); }, 1000);
     fetchWeather();
