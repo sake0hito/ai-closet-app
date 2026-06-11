@@ -27,7 +27,8 @@ const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.goo
 const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 
 const CATEGORIES = {
-    "トップス・アウター": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター", "カーディガン", "ジャケット"],
+    "トップス": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
+    "アウター": ["ジャケット", "ブルゾン", "コート", "トレンチコート", "ダウンジャケット", "レザージャケット", "デニムジャケット", "マウンテンパーカ", "カーディガン", "ジレ・ベスト"],
     "ボトムス": ["デニム", "チノパン", "カーゴパンツ", "スラックス", "ショートパンツ", "クロップパンツ", "バミューダパンツ", "カプリパンツ", "スキニーパンツ", "サルエルパンツ", "テーパードパンツ", "ワイドパンツ", "ガウチョパンツ", "バギーパンツ", "その他のボトムス"],
     "帽子": ["ハット", "キャップ", "ニット帽", "その他の帽子"],
     "靴": ["スニーカー", "革靴", "ブーツ", "サンダル", "パンプス", "フラットシューズ"],
@@ -503,12 +504,42 @@ function initStyleChart() {
 // =============================================
 // 週間コーデ生成（所持服優先・前日被り防止・履歴反映）
 // =============================================
+// コーデ提案ルール（localStorageに保存。アウター必須判定に使用）
+function getCoordRules() {
+    try {
+        return Object.assign({ outerCold: true, outerTemp: 15, outerRain: true },
+            JSON.parse(localStorage.getItem('coord_rules') || '{}'));
+    } catch {
+        return { outerCold: true, outerTemp: 15, outerRain: true };
+    }
+}
+
+window.setOuterRule = function(key, value) {
+    const rules = getCoordRules();
+    rules[key] = value;
+    localStorage.setItem('coord_rules', JSON.stringify(rules));
+    if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
+    navigate('settings');
+};
+
+// 寒い日・雨雪の日にアウターが必要か判定
+function needsOuter(outfit, rules) {
+    const cond = outfit.condition || '';
+    if (rules.outerRain && (cond === '雨' || cond === '雪')) return true;
+    const temp = parseInt(outfit.temp);
+    if (rules.outerCold && outfit.temp !== '--°C' && !isNaN(temp) && temp <= rules.outerTemp) return true;
+    return false;
+}
+
 function generateWeeklyOutfitsFromCloset() {
     if (closetItems.length === 0 && wearHistory.length === 0) return;
 
-    const tops      = closetItems.filter(i => i.category === 'トップス・アウター');
+    // 「トップス・アウター」は旧データ。トップス扱いで後方互換を保つ
+    const tops      = closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター');
     const bottoms   = closetItems.filter(i => i.category === 'ボトムス');
     const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス');
+    const outers    = closetItems.filter(i => i.category === 'アウター');
+    const coordRules = getCoordRules();
 
     // 直近の着用履歴IDセット（被り回避）：新旧スキーマ対応
     const recentIds = new Set(wearHistory.slice(0, 14).flatMap(h =>
@@ -528,6 +559,7 @@ function generateWeeklyOutfitsFromCloset() {
 
     weeklyOutfits.forEach((outfit, index) => {
         const weather = outfit.temp !== '--°C' ? `気温${outfit.temp}・${outfit.condition}` : '';
+        outfit.outerImage = null; outfit.outerName = null; // 毎回リセット（前回の残りを消す）
 
         // Day2以降は着用履歴からのコーデも候補に（50%の確率）
         if (index > 0 && historyPool.length > 0) {
@@ -541,7 +573,7 @@ function generateWeeklyOutfitsFromCloset() {
                 let topsImage = null, bottomsImage = null;
                 if (h.items && h.items.length > 0) {
                     const topsItem = h.items.find(it =>
-                        it.category === 'トップス・アウター' || it.category === 'ワンピース' || it.category === 'ドレス');
+                        it.category === 'トップス' || it.category === 'トップス・アウター' || it.category === 'ワンピース' || it.category === 'ドレス');
                     const bottomsItem = h.items.find(it => it.category === 'ボトムス');
                     topsImage    = topsItem?.image || display.images[0];
                     bottomsImage = bottomsItem?.image || null;
@@ -605,6 +637,18 @@ function generateWeeklyOutfitsFromCloset() {
                 : `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」を使ったコーデです。`;
             prevTopsId    = t.id;
             prevBottomsId = b ? b.id : prevBottomsId;
+        }
+
+        // 提案ルール：寒い日・雨雪の日はアウターをセット提案
+        if (needsOuter(outfit, coordRules) && outers.length > 0) {
+            const outerPool = prefer(outers);
+            const o = outerPool[Math.floor(Math.random() * outerPool.length)];
+            if (o) {
+                outfit.outerImage = o.image;
+                outfit.outerName  = o.subCategory || 'アウター';
+                const why = (outfit.condition === '雨' || outfit.condition === '雪') ? '雨で冷えるので' : '冷えるので';
+                outfit.reason += ` ${why}「${outfit.outerName}」も羽織って。`;
+            }
         }
     });
 
@@ -755,6 +799,7 @@ const routes = {
                         <div class="outfit-details">
                             <h4 class="mb-4">${outfit.isFromHistory ? '📅 ' : ''}${outfit.title}</h4>
                             <div style="display:flex; flex-wrap:wrap; gap:4px;">${outfit.tags.map(tag => `<span class="tag-small">${tag}</span>`).join('')}</div>
+                            ${outfit.outerImage ? `<div style="margin-top:6px;"><span class="tag-small" style="background:var(--accent-color); color:#fff;">🧥 ${outfit.outerName || 'アウター'}</span></div>` : ''}
                             <p class="mt-4" style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4;">
                                 <i data-lucide="sparkles" class="inline-icon" style="color: var(--accent-color);"></i>
                                 ${outfit.reason}
@@ -899,6 +944,7 @@ const routes = {
         title: "設定",
         showFab: false,
         render: () => {
+            const rules = getCoordRules();
             return `
             <div class="card">
                 <h3 class="section-title">テーマカラー</h3>
@@ -907,6 +953,27 @@ const routes = {
                     <button class="theme-btn" data-theme="${t.id}" onclick="setTheme('${t.id}')">
                         <span class="theme-dot" style="background:${t.color}"></span>${t.name}
                     </button>`).join('')}
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <h3 class="section-title">🧥 コーデ提案ルール</h3>
+                <div class="info-box">寒い日や雨の日に、トップスと一緒にアウターも自動で提案します。</div>
+                <div class="setting-row">
+                    <span>寒い日はアウターも提案</span>
+                    <label class="toggle-switch"><input type="checkbox" ${rules.outerCold ? 'checked' : ''} onchange="setOuterRule('outerCold', this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="setting-row">
+                    <span>　└ 何℃以下で提案？</span>
+                    <select onchange="setOuterRule('outerTemp', parseInt(this.value))" class="input-field" style="width:auto; padding:8px 10px;">
+                        <option value="18" ${rules.outerTemp === 18 ? 'selected' : ''}>18℃以下</option>
+                        <option value="15" ${rules.outerTemp === 15 ? 'selected' : ''}>15℃以下</option>
+                        <option value="12" ${rules.outerTemp === 12 ? 'selected' : ''}>12℃以下</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <span>雨・雪の日はアウターも提案</span>
+                    <label class="toggle-switch"><input type="checkbox" ${rules.outerRain ? 'checked' : ''} onchange="setOuterRule('outerRain', this.checked)"><span class="slider"></span></label>
                 </div>
             </div>
 
@@ -1199,11 +1266,25 @@ window.openOutfitDetails = function(index) {
             </div>`;
     }
 
+    // アウター提案（寒い日・雨雪の日のみ）
+    let outerHtml = '';
+    if (outfit.outerImage) {
+        outerHtml = `
+            <div style="background:var(--primary-light); border:1px solid rgba(14,165,233,0.2); padding:12px; border-radius:10px; margin-bottom:16px; display:flex; align-items:center; gap:12px;">
+                <img src="${outfit.outerImage}" style="width:56px; height:56px; border-radius:8px; object-fit:cover; flex-shrink:0;">
+                <div>
+                    <p style="font-weight:bold; color:var(--text-primary); font-size:0.9rem;">🧥 アウターもセットで</p>
+                    <p style="font-size:0.8rem; color:var(--text-secondary);">${outfit.outerName || 'アウター'}を羽織るのがおすすめです。</p>
+                </div>
+            </div>`;
+    }
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">${outfit.title}</h3>
             ${imageHtml}
+            ${outerHtml}
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
                 ${outfit.tags.map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
@@ -1394,7 +1475,7 @@ async function showAIAnalysisModal() {
     // デフォルトデータ
     let analyzedData = {
         image: currentUploadedImage,
-        category: "トップス・アウター",
+        category: "トップス",
         subCategory: "Tシャツ",
         colors: ["白"],
         lightness: "指定なし",
@@ -1406,7 +1487,7 @@ async function showAIAnalysisModal() {
     // Gemini AIで画像解析を実行
     try {
         const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
-{"category":"トップス・アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（バッグ・ベルト・アクセサリー・眼鏡・サングラス・時計・マフラー・手袋などは「小物」）","subCategory":"カテゴリに合った種類（例：Tシャツ、デニム、スニーカー、バッグ、眼鏡）","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
+{"category":"トップス または アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（ジャケット・コート・ブルゾン・ダウン・カーディガンなど羽織るものは「アウター」、バッグ・ベルト・アクセサリー・眼鏡・サングラス・時計・マフラー・手袋などは「小物」）","subCategory":"カテゴリに合った種類（例：Tシャツ、コート、デニム、スニーカー、バッグ、眼鏡）","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
 
         const result = await callGemini(prompt, currentUploadedImage);
         if (result) {
@@ -1605,7 +1686,7 @@ async function saveItemData(isNew, existingId) {
 window.openCoordPicker = function(slot) {
     currentTargetSlot = slot;
     const categoryMap = {
-        'トップス・アウター': ['トップス・アウター'],
+        'トップス・アウター': ['トップス', 'アウター', 'トップス・アウター'],
         'ワンピース': ['ワンピース', 'ドレス'],
         'ボトムス': ['ボトムス'],
         '靴': ['靴'],
