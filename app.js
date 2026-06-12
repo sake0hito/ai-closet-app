@@ -74,29 +74,39 @@ const THEMES = [
 // =============================================
 let currentUser = null;
 let googleTokenClient;
-let isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
+// 位置情報・カレンダー連携はユーザーごとに保存（uidで紐付け）。ログイン後に読み込む
+let isCalendarConnected = false;
 let calendarEvents = {};
 let calendarStatusMsg = '';
 
-// 位置情報（localStorageにのみ保存、Firebaseには送らない）
-let userLocation = (() => {
-    try { return JSON.parse(localStorage.getItem('user_location') || 'null'); }
-    catch { return null; }
-})();
+// 位置情報（localStorageにのみ保存、Firebaseには送らない・ユーザー別）
+let userLocation = null;
 
-let weeklyOutfits = Array(7).fill(null).map((_, i) => {
-    const d = new Date(); d.setDate(d.getDate() + i);
-    return {
-        dateObj: d,
-        dateStr: d.toLocaleDateString('ja-JP', {month:'short', day:'numeric', weekday:'short'}),
-        isoDate: d.toISOString().split('T')[0],
-        temp: "--°C", condition: "--", icon: "loader", event: null,
-        title: i === 0 ? "今日のAIコーデ" : (i === 1 ? "明日のAIコーデ" : `${d.getDate()}日のAIコーデ`),
-        image: `https://images.unsplash.com/photo-${1500000000000 + i * 100000}?auto=format&fit=crop&w=400&q=80`,
-        tags: [STYLES[Math.floor(Math.random()*STYLES.length)].replace('系',''), SEASONS[Math.floor(Math.random()*SEASONS.length)]],
-        reason: "データ取得中..."
-    };
-});
+// ログイン中ユーザーの保存設定（位置情報・カレンダー連携）を読み込む
+function loadUserPrefs() {
+    if (!currentUser) { userLocation = null; isCalendarConnected = false; return; }
+    try { userLocation = JSON.parse(localStorage.getItem(`user_location_${currentUser.uid}`) || 'null'); }
+    catch { userLocation = null; }
+    isCalendarConnected = localStorage.getItem(`cal_connected_${currentUser.uid}`) === 'true';
+}
+
+// 週間コーデの初期状態を生成（ユーザー切替時のリセットにも使用）
+function buildInitialWeeklyOutfits() {
+    return Array(7).fill(null).map((_, i) => {
+        const d = new Date(); d.setDate(d.getDate() + i);
+        return {
+            dateObj: d,
+            dateStr: d.toLocaleDateString('ja-JP', {month:'short', day:'numeric', weekday:'short'}),
+            isoDate: d.toISOString().split('T')[0],
+            temp: "--°C", condition: "--", icon: "loader", event: null,
+            title: i === 0 ? "今日のAIコーデ" : (i === 1 ? "明日のAIコーデ" : `${d.getDate()}日のAIコーデ`),
+            image: null, topsImage: null, bottomsImage: null, outerImage: null, outerName: null,
+            tags: [],
+            reason: "クローゼットに服を登録すると、ここにAIコーデが提案されます。"
+        };
+    });
+}
+let weeklyOutfits = buildInitialWeeklyOutfits();
 
 let closetItems = [];
 let wearHistory = [];
@@ -188,8 +198,8 @@ window.enableLocationWeather = function() {
             const { latitude, longitude } = pos.coords;
             const name = await reverseGeocode(latitude, longitude);
             userLocation = { lat: latitude, lon: longitude, name };
-            // ⚠️ localStorageにのみ保存（サーバー・Firebaseには一切送らない）
-            localStorage.setItem('user_location', JSON.stringify(userLocation));
+            // ⚠️ localStorageにのみ保存（サーバー・Firebaseには一切送らない・ユーザー別）
+            if (currentUser) localStorage.setItem(`user_location_${currentUser.uid}`, JSON.stringify(userLocation));
             await fetchWeather();
             navigate('settings');
         },
@@ -206,7 +216,7 @@ window.enableLocationWeather = function() {
 
 window.disableLocationWeather = function() {
     userLocation = null;
-    localStorage.removeItem('user_location');
+    if (currentUser) localStorage.removeItem(`user_location_${currentUser.uid}`);
     fetchWeather();
     navigate('settings');
 };
@@ -216,14 +226,29 @@ window.disableLocationWeather = function() {
 // =============================================
 onAuthStateChanged(auth, (user) => {
     if (user) {
+        // ユーザーが変わった時は、前ユーザーのデータ・表示・設定を必ずリセット（情報の混在防止）
+        const changed = !currentUser || currentUser.uid !== user.uid;
         currentUser = user;
         authOverlay.classList.add('hidden');
+        if (changed) {
+            isDataLoaded = false;
+            closetItems = [];
+            wearHistory = [];
+            weeklyOutfits = buildInitialWeeklyOutfits();
+            calendarEvents = {};
+            loadUserPrefs();   // このユーザー専用の位置情報・カレンダー設定を読み込む
+            fetchWeather();    // 読み込んだ位置で天気を取得し直す
+        }
         fetchFirebaseData();
     } else {
         currentUser = null;
         isDataLoaded = false;
         closetItems = [];
         wearHistory = [];
+        weeklyOutfits = buildInitialWeeklyOutfits();
+        calendarEvents = {};
+        userLocation = null;
+        isCalendarConnected = false;
         authOverlay.classList.remove('hidden');
     }
 });
