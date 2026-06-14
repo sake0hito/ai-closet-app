@@ -1397,6 +1397,7 @@ window.openItemDetails = function(id) {
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
                 ${tags.map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
+            ${item.size ? `<p style="font-size:0.9rem; margin-bottom:12px;"><span style="color:var(--text-secondary);">📏 サイズ：</span><strong>${item.size}</strong></p>` : ''}
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
             <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
             <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
@@ -1559,7 +1560,8 @@ window.openEditForm = function(existingId = null, presetData = null) {
         lightness: baseItem.lightness || "指定なし",
         styles: Array.isArray(baseItem.styles) ? [...baseItem.styles] : (baseItem.style ? [baseItem.style] : []),
         seasons: Array.isArray(baseItem.seasons) ? [...baseItem.seasons] : (baseItem.season ? [baseItem.season] : []),
-        memo: baseItem.memo || ""
+        memo: baseItem.memo || "",
+        size: baseItem.size || ""
     };
 
     renderEditFormContent();
@@ -1603,6 +1605,28 @@ function renderEditFormContent() {
                 <div class="form-btn-group">${renderMultiBtn('seasons', SEASONS)}</div>
             </div>
 
+            ${currentEditData.category !== '小物' ? `<div class="form-group"><label>サイズ（任意・自由入力）</label>
+                <input type="text" id="input-size" class="input-field" placeholder="例：M ／ 160cm ／ ウエスト72" value="${(currentEditData.size || '').replace(/"/g, '&quot;')}">
+                <p onclick="toggleSizeChart()" style="font-size:0.8rem; color:var(--primary-color); font-weight:600; cursor:pointer; margin-top:8px; display:inline-block;">
+                    📏 サイズチャートを確認する
+                </p>
+                <div id="size-chart" class="hidden" style="margin-top:8px; background:var(--surface-solid); border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:12px; font-size:0.8rem; color:var(--text-secondary);">
+                    <strong style="color:var(--text-primary);">サイズの目安（参考）</strong>
+                    <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+                        <tr style="border-bottom:1px solid rgba(0,0,0,0.1);">
+                            <th style="text-align:left; padding:4px;">表記</th><th style="text-align:left; padding:4px;">レディース</th><th style="text-align:left; padding:4px;">メンズ(身長)</th>
+                        </tr>
+                        <tr><td style="padding:4px;">S</td><td style="padding:4px;">7〜9号</td><td style="padding:4px;">155〜165cm</td></tr>
+                        <tr><td style="padding:4px;">M</td><td style="padding:4px;">9〜11号</td><td style="padding:4px;">165〜172cm</td></tr>
+                        <tr><td style="padding:4px;">L</td><td style="padding:4px;">11〜13号</td><td style="padding:4px;">172〜178cm</td></tr>
+                        <tr><td style="padding:4px;">XL</td><td style="padding:4px;">13〜15号</td><td style="padding:4px;">178〜185cm</td></tr>
+                    </table>
+                    <p style="margin-top:6px;">👖 ボトムスはウエスト(cm)、👟 靴は実寸(cm)で入力するのがおすすめ。</p>
+                    <p style="margin-top:4px; opacity:0.8;">※ブランドにより差があります。あくまで目安です。</p>
+                    <button type="button" onclick="toggleSizeChart()" class="btn-outline text-center" style="margin-top:10px; padding:8px; font-size:0.8rem;">閉じる</button>
+                </div>
+            </div>` : ''}
+
             <div class="form-group"><label>メモ</label>
                 <input type="text" id="input-memo" class="input-field" placeholder="例：ユニクロ 2024年モデル" value="${currentEditData.memo}">
             </div>
@@ -1625,6 +1649,9 @@ window.setFormSingle = function(group, val) {
         // カテゴリ変更時は種類ボタンが変わるので部分的に再描画
         const subs = CATEGORIES[val];
         currentEditData.subCategory = (subs && subs.length > 0) ? subs[0] : "";
+        // 入力中のメモ・サイズを保持してから再描画
+        const memoEl = document.getElementById('input-memo'); if (memoEl) currentEditData.memo = memoEl.value;
+        const sizeEl = document.getElementById('input-size'); if (sizeEl) currentEditData.size = sizeEl.value;
         const mc = document.querySelector('.modal-content');
         const scrollPos = mc?.scrollTop || 0;
         renderEditFormContent();
@@ -1635,6 +1662,12 @@ window.setFormSingle = function(group, val) {
             btn.classList.toggle('active', btn.dataset.val === val);
         });
     }
+};
+
+// サイズチャートの表示/非表示を切り替え
+window.toggleSizeChart = function() {
+    const el = document.getElementById('size-chart');
+    if (el) el.classList.toggle('hidden');
 };
 
 // フォームの複数選択（再描画なし）
@@ -1657,6 +1690,7 @@ async function saveItemData(isNew, existingId) {
     lucide.createIcons();
 
     currentEditData.memo = document.getElementById('input-memo')?.value || '';
+    currentEditData.size = document.getElementById('input-size')?.value || '';
 
     try {
         if (isNew) {
@@ -1675,7 +1709,8 @@ async function saveItemData(isNew, existingId) {
                 lightness: currentEditData.lightness,
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
-                memo: currentEditData.memo
+                memo: currentEditData.memo,
+                size: currentEditData.size
             };
             const docRef = await addDoc(collection(db, "closetItems"), docData);
             closetItems.unshift({ id: docRef.id, ...docData });
@@ -1688,7 +1723,8 @@ async function saveItemData(isNew, existingId) {
                 lightness: currentEditData.lightness,
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
-                memo: currentEditData.memo
+                memo: currentEditData.memo,
+                size: currentEditData.size
             };
             await updateDoc(doc(db, "closetItems", existingId), updateData);
             const target = closetItems.find(i => i.id === existingId);
