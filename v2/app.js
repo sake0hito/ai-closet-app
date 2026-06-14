@@ -716,19 +716,28 @@ window.sendChat = async function() {
     lucide.createIcons();
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    // クロゼット傾向サマリーを構築
+    // 手持ちの服リスト（最大40点まで具体的に渡す）
     const styleCounts = {};
     closetItems.forEach(item => {
         (item.styles || []).forEach(s => { styleCounts[s] = (styleCounts[s] || 0) + 1; });
     });
     const styleStr = Object.entries(styleCounts).sort((a,b) => b[1]-a[1]).slice(0,3)
         .map(([k,v]) => `${k}(${v}点)`).join('、') || 'データなし';
+    const itemList = closetItems.slice(0, 40).map(it => {
+        const c = (it.colors || []).join('・') || '色未登録';
+        const s = (it.styles || []).map(x => x.replace('系', '')).join('・');
+        return `・${it.subCategory || it.category}（${c}${s ? '／' + s : ''}${it.size ? '／' + it.size : ''}）`;
+    }).join('\n') || '（まだ服が登録されていません）';
     const todayWeather = weeklyOutfits[0];
     const locationName = userLocation?.name || '東京';
 
-    const systemPrompt = `あなたはプロのファッションスタイリストAIです。ユーザーの手持ちの服と天気を考慮して、具体的で実用的なコーデアドバイスをします。回答は200文字以内、日本語、フレンドリーなトーンで。`;
-    const contextStr = `クローゼット: ${closetItems.length}点。主なスタイル: ${styleStr}。今日の天気(${locationName}): ${todayWeather.temp}、${todayWeather.condition}。`;
-    const fullPrompt = `${systemPrompt}\n\nコンテキスト: ${contextStr}\n\nユーザーの質問: ${msg}`;
+    // 直近の会話履歴（最新の質問を除く直近6件）
+    const history = chatMessages.slice(-7, -1)
+        .map(m => `${m.role === 'user' ? 'ユーザー' : 'AI'}：${m.text}`).join('\n');
+
+    const systemPrompt = `あなたはプロのファッションスタイリストAIです。次のルールを必ず守って回答してください：\n・ユーザーが実際に持っている服（下記リスト）の中から具体的に名前を挙げて提案する。持っていない服は勧めない（買い足しの相談をされた場合は除く）。\n・登録された色をそのまま使い、実物の色を勝手に想像しない。\n・天気・気温も考慮する。\n・日本語・300文字以内・フレンドリーで実用的に。`;
+    const contextStr = `【手持ちの服 ${closetItems.length}点（主なスタイル: ${styleStr}）】\n${itemList}\n\n【今日の天気(${locationName})】${todayWeather.temp}、${todayWeather.condition}`;
+    const fullPrompt = `${systemPrompt}\n\n${contextStr}\n\n【これまでの会話】\n${history || '（なし）'}\n\n【ユーザーの質問】\n${msg}`;
 
     try {
         const response = await callGemini(fullPrompt);
@@ -1901,7 +1910,7 @@ window.analyzeCoordination = async function() {
     resEl.classList.remove('hidden');
     lucide.createIcons();
 
-    const describe = item => `${item.subCategory || item.category}（色:${(item.colors||[]).join('・') || 'なし'}、スタイル:${(item.styles||[]).join('・') || 'なし'}）`;
+    const describe = item => `${item.subCategory || item.category}（色:${(item.colors||[]).join('・') || '未登録'}、明るさ:${item.lightness || '指定なし'}、スタイル:${(item.styles||[]).join('・') || '未登録'}、季節:${(item.seasons||[]).join('・') || '指定なし'}）`;
 
     let itemsDesc = coordState.type === 'tops'
         ? `トップス：${describe(main)}`
@@ -1912,10 +1921,26 @@ window.analyzeCoordination = async function() {
     if (coordState.accessory) itemsDesc += `\n小物：${describe(coordState.accessory)}`;
 
     try {
-        const prompt = `以下のコーデを分析してください（日本語・200文字以内）：\n${itemsDesc}\n★全体の相性を1〜5で評価し、具体的なワンポイントアドバイスをください。`;
+        const prompt = `あなたはプロのスタイリストです。次の手持ちアイテムの組み合わせを評価してください。
+${itemsDesc}
+
+【ルール】
+・評価は上記の登録データのみに基づくこと。写真は見ていないので、実際の色・柄・素材を想像して描写しないこと。色は登録データの色をそのまま使うこと。
+・必ず下記の形式で、日本語・全体300文字以内で回答すること。
+
+相性スコア：(1〜5の整数)/5
+良い点：(1〜2文)
+改善点：(1〜2文)
+プラス提案：(小物や着こなしの工夫を一言)`;
         const result = await callGemini(prompt);
         if (result) {
-            resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
+            const m = result.match(/相性スコア[:：]\s*([1-5])/);
+            let starHtml = '';
+            if (m) {
+                const n = parseInt(m[1]);
+                starHtml = `<div style="font-size:1.2rem; color:var(--accent-color); margin-bottom:6px;">${'★'.repeat(n)}${'☆'.repeat(5 - n)} <span style="font-size:0.85rem; color:var(--text-secondary);">${n}/5</span></div>`;
+            }
+            resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${starHtml}${result.replace(/\n/g, '<br>')}`;
             return;
         }
     } catch (e) {
