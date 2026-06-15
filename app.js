@@ -145,7 +145,7 @@ const authError = document.getElementById('auth-error');
 // =============================================
 // Gemini AI API（Cloudflare Workers 経由）
 // =============================================
-async function callGemini(prompt, imageBase64 = null) {
+async function callGemini(prompt, imageBase64 = null, opts = {}) {
     let base64Data = null;
     let mimeType = 'image/jpeg';
     if (imageBase64) {
@@ -157,7 +157,7 @@ async function callGemini(prompt, imageBase64 = null) {
     const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType })
+        body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType, json: opts.json || false })
     });
 
     if (!response.ok) {
@@ -1756,7 +1756,7 @@ window.analyzeCoordination = async function() {
     resEl.classList.remove('hidden');
     lucide.createIcons();
 
-    const describe = item => `${item.subCategory || item.category}（色:${(item.colors||[]).join('・') || 'なし'}、スタイル:${(item.styles||[]).join('・') || 'なし'}）`;
+    const describe = item => `${item.subCategory || item.category}（色:${(item.colors||[]).join('・') || '未登録'}、明るさ:${item.lightness || '指定なし'}、スタイル:${(item.styles||[]).join('・') || '未登録'}、季節:${(item.seasons||[]).join('・') || '指定なし'}）`;
 
     let itemsDesc = coordState.type === 'tops'
         ? `トップス：${describe(main)}`
@@ -1766,10 +1766,28 @@ window.analyzeCoordination = async function() {
     if (coordState.hat)     itemsDesc += `\n帽子：${describe(coordState.hat)}`;
 
     try {
-        const prompt = `以下のコーデを分析してください（日本語・200文字以内）：\n${itemsDesc}\n★全体の相性を1〜5で評価し、具体的なワンポイントアドバイスをください。`;
-        const result = await callGemini(prompt);
+        const prompt = `あなたはプロのスタイリストです。次の手持ちアイテムの組み合わせを評価し、JSONのみで返してください。
+${itemsDesc}
+
+ルール:
+- 評価は上記の登録データのみに基づくこと。写真は見ていないので実際の色・柄・素材を想像しないこと。色は登録データの色をそのまま使うこと。
+- 各項目は日本語で簡潔に書くこと。
+返すJSONの形式:
+{"score": 1〜5の整数, "good": "良い点(1〜2文)", "improve": "改善点(1〜2文)", "plus": "小物や着こなしの工夫(一言)"}`;
+        const result = await callGemini(prompt, null, { json: true });
         if (result) {
-            resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
+            let data = null;
+            try { data = JSON.parse(result); } catch { data = null; }
+            if (data && data.score) {
+                const n = Math.max(1, Math.min(5, parseInt(data.score) || 3));
+                const stars = `<div style="font-size:1.2rem; color:var(--accent-color); margin-bottom:8px;">${'★'.repeat(n)}${'☆'.repeat(5 - n)} <span style="font-size:0.85rem; color:var(--text-secondary);">${n}/5</span></div>`;
+                resEl.innerHTML = `<strong>✨ AI分析結果</strong>${stars}` +
+                    `<p style="margin-bottom:6px;"><strong>良い点：</strong>${data.good || '―'}</p>` +
+                    `<p style="margin-bottom:6px;"><strong>改善点：</strong>${data.improve || '―'}</p>` +
+                    `<p><strong>プラス提案：</strong>${data.plus || '―'}</p>`;
+            } else {
+                resEl.innerHTML = `<strong>✨ AI分析結果</strong><br>${result.replace(/\n/g, '<br>')}`;
+            }
             return;
         }
     } catch (e) {
