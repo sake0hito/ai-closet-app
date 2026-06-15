@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AI Closet (V3テスト版)</title>
+<!-- アプリアイコン / ファビコン（親フォルダの画像を参照） -->
+<link rel="icon" type="image/png" href="../ai-closet-icon-512.png">
+<link rel="apple-touch-icon" href="../ai-closet-icon-512.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0ea5e9">
+<link rel="stylesheet" href="style.css">
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest"></script>
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="theme-morning">
+
+<!-- Auth Overlay (Login/Register) -->
+<div id="auth-overlay">
+  <div class="auth-card">
+    <h2>AI Closet</h2>
+    <p>あなた専用のクローゼットを作るために、ログインまたは登録をお願いします。</p>
+    <button id="btn-google-login" class="auth-btn-google">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
+      Googleでログイン / 登録
+    </button>
+    <hr>
+    <p style="margin-bottom:8px;">またはメールアドレスで登録</p>
+    <input type="email" id="auth-email" placeholder="メールアドレス">
+    <input type="password" id="auth-password" placeholder="パスワード (6文字以上)">
+    <button type="button" id="btn-email-login" class="auth-btn-primary">ログイン</button>
+    <button type="button" id="btn-email-register" class="auth-btn-secondary">新規登録</button>
+    <div id="auth-error" style="color: #ef4444; font-size: 0.8rem; margin-top: 12px; min-height: 1.2rem;"></div>
+  </div>
+</div>
+
+<div id="app-container">
+  <!-- Header -->
+  <header id="app-header">
+    <h1 id="header-title">ホーム</h1>
+    <div id="header-actions"></div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main id="main-content">
+    <!-- 画面コンテンツがここに動的にレンダリングされます -->
+  </main>
+
+  <!-- Bottom Navigation -->
+  <nav id="bottom-nav">
+    <button class="nav-btn active" data-target="home">
+      <i data-lucide="home"></i>
+      <span>ホーム</span>
+    </button>
+    <button class="nav-btn" data-target="closet">
+      <i data-lucide="shirt"></i>
+      <span>クローゼット</span>
+    </button>
+    <button class="nav-btn" data-target="history">
+      <i data-lucide="calendar"></i>
+      <span>履歴</span>
+    </button>
+    <button class="nav-btn" data-target="settings">
+      <i data-lucide="settings"></i>
+      <span>設定</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Floating Action Button for Adding Clothes -->
+<button id="fab-add" class="hidden">
+  <i data-lucide="plus"></i>
+</button>
+
+<!-- Native Camera/File Input -->
+<input type="file" id="native-camera-input" accept="image/*" class="hidden">
+
+<!-- Modal Container -->
+<div id="modal-container" class="hidden"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
