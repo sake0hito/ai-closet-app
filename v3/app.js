@@ -347,6 +347,7 @@ async function fetchFirebaseData() {
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
 
         isDataLoaded = true;
+        loadSchedulesIntoEvents();   // 自分で入れた予定をコーデ提案に反映
         generateWeeklyOutfitsFromCloset();
         if (currentRoute === 'closet' || currentRoute === 'history' || currentRoute === 'home') navigate(currentRoute);
     } catch (e) {
@@ -1129,30 +1130,6 @@ const routes = {
                         現在地から天気を取得する
                     </button>
                     <p style="font-size:0.75rem; color:var(--text-secondary); margin-top:8px;">ボタンを押すとブラウザから位置情報の許可を求めます。</p>
-                `}
-            </div>
-
-            <div class="card mt-4">
-                <h3 class="section-title">📅 Googleカレンダー連携</h3>
-                ${isCalendarConnected ? `
-                    <div style="display:flex; align-items:center; gap:8px; padding:12px; background:var(--primary-light); border-radius:8px; color:var(--primary-color); margin-bottom:12px;">
-                        <i data-lucide="check-circle" class="inline-icon"></i> Googleカレンダー連携済み
-                    </div>
-                    ${calendarStatusMsg
-                        ? `<div class="info-box" style="margin-bottom:12px;">${calendarStatusMsg}</div>`
-                        : `<div class="info-box" style="margin-bottom:12px;">「予定を更新」を押すと、最新のカレンダーの予定をコーデに反映します。</div>`}
-                    <button onclick="refreshCalendar()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px;">
-                        <i data-lucide="refresh-cw" class="inline-icon"></i> 予定を更新
-                    </button>
-                    <button onclick="disconnectCalendar()" class="btn-outline text-danger" style="font-size:0.85rem; padding:10px;">連携を解除</button>
-                ` : `
-                    <button class="btn-google" onclick="connectGoogleCalendar()">
-                        <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
-                        Googleカレンダーと連携
-                    </button>
-                    <div class="info-box" style="margin-top:8px; margin-bottom:0;">
-                        ⚠️ 「このアプリはGoogleに確認されていません」と表示された場合は、「詳細」→「sake0hito.github.ioに移動」をクリックして続行できます。
-                    </div>
                 `}
             </div>
 
@@ -2135,6 +2112,31 @@ window.toggleHistorySort = function() {
     navigate('history');
 };
 
+// 予定（ユーザー自身が入力）：端末内（localStorage）にユーザー別・日付別で保存
+function getSchedule(iso) {
+    if (!currentUser) return '';
+    return localStorage.getItem(`schedule_${currentUser.uid}_${iso}`) || '';
+}
+// 1週間分の自前予定を calendarEvents に反映（ホームのコーデ提案・予定バッジに使う）
+function loadSchedulesIntoEvents() {
+    weeklyOutfits.forEach(o => {
+        const s = getSchedule(o.isoDate);
+        if (s) calendarEvents[o.isoDate] = s;
+        else delete calendarEvents[o.isoDate];
+    });
+}
+window.saveSchedule = function(iso) {
+    const val = (document.getElementById('day-schedule-input')?.value || '').trim();
+    if (currentUser) {
+        if (val) localStorage.setItem(`schedule_${currentUser.uid}_${iso}`, val);
+        else localStorage.removeItem(`schedule_${currentUser.uid}_${iso}`);
+    }
+    loadSchedulesIntoEvents();
+    if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
+    closeModal();
+    navigate(currentRoute === 'home' ? 'home' : 'history'); // カレンダー/ホームを更新
+};
+
 function renderHistoryCalendar() {
     const y = calendarMonth.getFullYear();
     const m = calendarMonth.getMonth();
@@ -2176,13 +2178,17 @@ function renderHistoryCalendar() {
         const dow = new Date(y, m, day).getDay();
         const color = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : 'var(--text-primary)';
 
+        const hasSchedule = !!getSchedule(iso);
         html += `
-        <div onclick="${items.length > 0 ? `openHistoryDayModal('${iso}')` : ''}"
-            style="padding:6px 2px; border-radius:8px; cursor:${items.length > 0 ? 'pointer' : 'default'};
-            background:${isToday ? 'var(--primary-light)' : items.length > 0 ? 'rgba(14,165,233,0.08)' : 'transparent'};
+        <div onclick="openHistoryDayModal('${iso}')"
+            style="padding:6px 2px; border-radius:8px; cursor:pointer;
+            background:${isToday ? 'var(--primary-light)' : (items.length > 0 || hasSchedule) ? 'rgba(14,165,233,0.08)' : 'transparent'};
             border:${isToday ? '1.5px solid var(--primary-color)' : '1.5px solid transparent'};">
             <div style="font-size:0.85rem; color:${color}; font-weight:${isToday?'bold':'normal'};">${day}</div>
-            ${items.length > 0 ? `<div style="display:flex; justify-content:center; gap:2px; margin-top:2px;">${items.slice(0,3).map(() => '<div style="width:5px;height:5px;border-radius:50%;background:var(--primary-color);"></div>').join('')}</div>` : '<div style="height:7px;"></div>'}
+            <div style="display:flex; justify-content:center; gap:2px; margin-top:2px; min-height:7px;">
+                ${items.slice(0,3).map(() => '<div style="width:5px;height:5px;border-radius:50%;background:var(--primary-color);"></div>').join('')}
+                ${hasSchedule ? '<div style="width:5px;height:5px;border-radius:50%;background:var(--accent-color);" title="予定あり"></div>' : ''}
+            </div>
         </div>`;
     }
 
@@ -2196,28 +2202,41 @@ window.shiftCalendarMonth = function(delta) {
 };
 
 window.openHistoryDayModal = function(iso) {
-    const items = wearHistory.filter(h => {
+    const dayRecords = wearHistory.filter(h => {
         const d = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : null);
         return d === iso;
     });
-    const dateStr = new Date(iso).toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'});
+    const dateStr = new Date(iso).toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric', weekday:'short'});
+    const schedule = getSchedule(iso);
+
+    // その日の保存服の画像を集めて並べる
+    const images = [];
+    dayRecords.forEach(h => getHistoryDisplayData(h).images.forEach(img => images.push(img)));
+    const imagesHtml = images.length > 0
+        ? `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-bottom:8px;">
+             ${images.map(src => `<img src="${src}" style="width:100%; height:90px; object-fit:cover; border-radius:8px;" alt="着用服">`).join('')}
+           </div>`
+        : `<p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:8px;">この日の着用記録はまだありません。</p>`;
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
-            <h3 class="section-title">${dateStr}の着用</h3>
-            <div style="display:flex; flex-direction:column; gap:12px;">
-                ${items.map(h => `
-                <div style="display:flex; gap:12px; align-items:center; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px;">
-                    <img src="${h.image || ''}" style="width:60px; height:60px; border-radius:8px; object-fit:cover; flex-shrink:0;">
-                    <div style="flex:1;">
-                        <p style="font-weight:bold;">${h.title}</p>
-                        ${h.memo ? `<p style="font-size:0.8rem; color:var(--text-secondary);">${h.memo}</p>` : ''}
-                    </div>
-                    <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer;">
-                        <i data-lucide="pencil" style="width:16px; height:16px;"></i>
-                    </button>
-                </div>`).join('')}
-            </div>
+            <h3 class="section-title">${dateStr}</h3>
+
+            <label style="font-weight:600; font-size:0.9rem;">📝 予定</label>
+            <input type="text" id="day-schedule-input" class="input-field" placeholder="例：友達とランチ／バイト／デート" value="${schedule.replace(/"/g, '&quot;')}" style="margin:6px 0 8px;">
+            <button onclick="saveSchedule('${iso}')" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px;">予定を保存</button>
+
+            <label style="font-weight:600; font-size:0.9rem;">👕 この日の着用</label>
+            <div style="margin-top:8px;">${imagesHtml}</div>
+            ${dayRecords.map(h => {
+                const disp = getHistoryDisplayData(h);
+                return `<div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(0,0,0,0.05); padding:8px 0;">
+                    <span style="font-size:0.85rem;">${disp.title}${disp.occasion ? `（${disp.occasion}）` : ''}</span>
+                    <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer;"><i data-lucide="pencil" style="width:16px; height:16px;"></i></button>
+                </div>`;
+            }).join('')}
+
             <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
         </div>
     `;

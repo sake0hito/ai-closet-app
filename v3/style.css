@@ -71,7 +71,7 @@ main::-webkit-scrollbar { display: none; }
 .card:active { transform: scale(0.98); }
 
 #bottom-nav { position: absolute; bottom: 0; left: 0; right: 0; height: 80px; background: var(--nav-bg); backdrop-filter: blur(15px); display: flex; justify-content: space-around; align-items: center; padding-bottom: env(safe-area-inset-bottom, 10px); border-top: var(--glass-border); z-index: 100; }
-.nav-btn { background: none; border: none; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; flex: 1; padding: 10px 0; }
+.nav-btn { background: none; border: none; color: var(--text-primary); display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 0.75rem; font-weight: 700; cursor: pointer; flex: 1; padding: 10px 0; }
 .nav-btn i { width: 24px; height: 24px; transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
 .nav-btn.active { color: var(--primary-color); }
 .nav-btn.active i { transform: translateY(-4px) scale(1.1); }
