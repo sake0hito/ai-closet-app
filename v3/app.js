@@ -698,6 +698,101 @@ window.sendQuickPrompt = function(prompt) {
     sendChat();
 };
 
+// 買い足しおすすめ（クローゼットの傾向分析 ＋ Geminiで不足アイテム提案 ＋ 楽天で実商品）
+window.showRecommendItems = async function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content text-center">
+            <i data-lucide="loader" class="spinner" style="width:32px; height:32px; color:var(--primary-color); display:block; margin:0 auto 12px;"></i>
+            <p style="font-weight:600;">クローゼットを分析中...</p>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+
+    // クローゼット分析（カテゴリ・スタイル・色の偏り）
+    const catCounts = {}, styleCounts = {}, colorCounts = {};
+    closetItems.forEach(it => {
+        catCounts[it.category] = (catCounts[it.category] || 0) + 1;
+        (it.styles || []).forEach(s => styleCounts[s] = (styleCounts[s] || 0) + 1);
+        (it.colors || []).forEach(c => colorCounts[c] = (colorCounts[c] || 0) + 1);
+    });
+    const catStr = Object.entries(catCounts).map(([k, v]) => `${k}:${v}点`).join('、') || 'なし';
+    const styleStr = Object.entries(styleCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
+    const colorStr = Object.entries(colorCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
+
+    // Geminiに「買い足すと着回しが広がるアイテム」を提案させる（JSON）
+    const prompt = `あなたはプロのスタイリストです。次の人のクローゼットを分析し、「今は持っていないが、買い足すと手持ちの服との着回しが広がるアイテム」を3点提案してください。
+【カテゴリ別の点数】${catStr}
+【スタイルの傾向】${styleStr}
+【色の傾向】${colorStr}
+
+ルール:
+- 手持ちに不足・手薄なカテゴリや色を補い、着回しが広がる物を選ぶ。
+- 各提案に、手持ちとの組み合わせ理由を一言添える。
+- keyword は楽天で検索する用の簡潔な日本語（例「白 シャツ メンズ」）。
+- JSONのみで返す。
+形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"楽天検索キーワード"}]}`;
+
+    let recs = [];
+    try {
+        const r = JSON.parse(await callGemini(prompt, null, { json: true }));
+        recs = (r.recommends || []).slice(0, 3);
+    } catch (e) { recs = []; }
+
+    // 各提案について楽天で実商品を取得（1件ずつ）
+    for (const rec of recs) {
+        rec.products = [];
+        try {
+            const res = await fetch(WORKER_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
+            });
+            const data = await res.json();
+            rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+        } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
+    }
+
+    // 表示
+    let html = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+            <h3 class="section-title">🛍 買い足しおすすめ</h3>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">あなたのクローゼットを分析し、着回しが広がるアイテムを提案します。</p>`;
+    if (recs.length === 0) {
+        html += `<p style="color:var(--text-secondary); font-size:0.88rem;">提案の取得に失敗しました。時間をおいて再度お試しください。</p>`;
+    } else {
+        recs.forEach(rec => {
+            html += `<div style="border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:12px; margin-bottom:12px;">
+                <p style="font-weight:bold; margin-bottom:4px;">＋ ${rec.item || ''}</p>
+                <p style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:8px;">${rec.reason || ''}</p>`;
+            if (rec.products && rec.products.length) {
+                html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">`;
+                rec.products.forEach(p => {
+                    const img = (p.mediumImageUrls && p.mediumImageUrls[0] && p.mediumImageUrls[0].imageUrl) ||
+                                (p.smallImageUrls && p.smallImageUrls[0] && p.smallImageUrls[0].imageUrl) || '';
+                    html += `<a href="${p.itemUrl}" target="_blank" rel="noopener" style="text-decoration:none; color:inherit; border:1px solid rgba(0,0,0,0.08); border-radius:8px; overflow:hidden; display:block;">
+                        <img src="${img}" style="width:100%; height:100px; object-fit:cover;" alt="item">
+                        <div style="padding:6px;">
+                            <p style="font-size:0.68rem; line-height:1.3; height:2.6em; overflow:hidden;">${p.itemName}</p>
+                            <p style="font-size:0.78rem; font-weight:bold; color:var(--primary-color); margin-top:2px;">¥${(p.itemPrice || 0).toLocaleString()}</p>
+                        </div>
+                    </a>`;
+                });
+                html += `</div>`;
+            }
+            html += `</div>`;
+        });
+        html += `<p style="font-size:0.7rem; color:var(--text-secondary);">※楽天市場の商品（アフィリエイトリンク）。タップで楽天が開きます。</p>`;
+    }
+    html += `<button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button></div>`;
+
+    modalContainer.innerHTML = html;
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
 // 今季のトレンドコーデ（楽天の人気商品＝トレンド傾向 ＋ Geminiで手持ち着こなし提案）
 window.showTrendCoord = async function() {
     modalContainer.innerHTML = `
@@ -1012,6 +1107,10 @@ const routes = {
                         <p style="font-size:0.75rem; color:var(--text-secondary); text-align:center; margin-top:8px;">登録中の服 ${closetItems.length}点から分析</p>
                     </div>`;
                 }
+                html += `
+                <button onclick="showRecommendItems()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:13px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <i data-lucide="shopping-bag" class="inline-icon"></i> 買い足しおすすめを見る
+                </button>`;
             }
 
             const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
