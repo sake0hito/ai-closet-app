@@ -793,6 +793,25 @@ window.showRecommendItems = async function() {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
+// お店を探す：現在地の近くで指定キーワードをGoogleマップ検索（無料・APIキー不要）
+window.openMapSearch = function(keyword) {
+    let q = keyword;
+    if (!q) {
+        const input = document.getElementById('map-search-input');
+        q = input ? input.value.trim() : '';
+    }
+    if (!q) return;
+    let url;
+    if (userLocation && userLocation.lat && userLocation.lon) {
+        // 現在地周辺で検索（地図を現在地中心に）
+        url = `https://www.google.com/maps/search/${encodeURIComponent(q)}/@${userLocation.lat},${userLocation.lon},14z`;
+    } else {
+        // 現在地なし → 端末の位置に任せて検索
+        url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    }
+    window.open(url, '_blank');
+};
+
 // 今季のトレンドコーデ（楽天の人気商品＝トレンド傾向 ＋ Geminiで手持ち着こなし提案）
 window.showTrendCoord = async function() {
     modalContainer.innerHTML = `
@@ -1039,6 +1058,28 @@ const routes = {
             <button onclick="showTrendCoord()" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:14px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
                 <i data-lucide="trending-up" class="inline-icon"></i> 今季のトレンドコーデを見る
             </button>
+            `;
+
+            // お店を探す（Googleマップ検索リンク・無料）
+            html += `
+            <h3 class="section-title mt-4">🗺 お店を探す</h3>
+            <div class="card">
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">近くのお店をGoogleマップで探します。${userLocation ? `（現在地：${userLocation.name}周辺）` : '（設定で現在地をオンにすると精度が上がります）'}</p>
+                <div class="quick-prompts">
+                    <button class="quick-prompt-btn" onclick="openMapSearch('古着屋')">古着屋</button>
+                    <button class="quick-prompt-btn" onclick="openMapSearch('ユニクロ')">ユニクロ</button>
+                    <button class="quick-prompt-btn" onclick="openMapSearch('GU')">GU</button>
+                    <button class="quick-prompt-btn" onclick="openMapSearch('セレクトショップ 服')">セレクトショップ</button>
+                    <button class="quick-prompt-btn" onclick="openMapSearch('無印良品')">無印良品</button>
+                    <button class="quick-prompt-btn" onclick="openMapSearch('しまむら')">しまむら</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <input type="text" id="map-search-input" class="input-field" placeholder="例：ヴィンテージ デニム ／ コート 古着" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') openMapSearch()">
+                    <button onclick="openMapSearch()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
+                        <i data-lucide="map-pin" style="width:18px; height:18px;"></i>
+                    </button>
+                </div>
+            </div>
             `;
 
             // コーデ検証ルーム
