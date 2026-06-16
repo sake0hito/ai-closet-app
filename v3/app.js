@@ -37,6 +37,7 @@ const CATEGORIES = {
     "スーツ": [],
     "小物": ["バッグ", "ベルト", "アクセサリー", "眼鏡", "サングラス", "時計", "マフラー", "手袋", "ストール", "スカーフ", "その他の小物"]
 };
+const GENDERS = ["メンズ", "レディース", "男女兼用"];
 const COLORS = ["赤", "青", "黄", "緑", "むらさき", "ピンク", "オレンジ", "ベージュ", "グレー", "黒", "白"];
 const STYLES = ["カジュアル系", "きれいめ（シンプル）系", "エレガント系", "クール系", "フォーマル系", "ストリート系", "フェミニン・ガーリー系", "アウトドア系", "アメカジ系"];
 const SEASONS = ["春", "夏", "秋", "冬", "オールシーズン"];
@@ -699,6 +700,15 @@ window.sendQuickPrompt = function(prompt) {
 };
 
 // 買い足しおすすめ（クローゼットの傾向分析 ＋ Geminiで不足アイテム提案 ＋ 楽天で実商品）
+// クローゼットで一番多い「対象」タグを返す（メンズ/レディース。同数や無しは ''＝中立）
+function getDominantGender() {
+    const counts = { 'メンズ': 0, 'レディース': 0 };
+    closetItems.forEach(it => { if (it.gender === 'メンズ' || it.gender === 'レディース') counts[it.gender]++; });
+    if (counts['メンズ'] === 0 && counts['レディース'] === 0) return '';
+    if (counts['メンズ'] === counts['レディース']) return '';
+    return counts['メンズ'] > counts['レディース'] ? 'メンズ' : 'レディース';
+}
+
 window.showRecommendItems = async function() {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
@@ -720,17 +730,19 @@ window.showRecommendItems = async function() {
     const catStr = Object.entries(catCounts).map(([k, v]) => `${k}:${v}点`).join('、') || 'なし';
     const styleStr = Object.entries(styleCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
     const colorStr = Object.entries(colorCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
+    const gender = getDominantGender(); // メンズ / レディース / ''（中立）
 
     // Geminiに「買い足すと着回しが広がるアイテム」を提案させる（JSON）
     const prompt = `あなたはプロのスタイリストです。次の人のクローゼットを分析し、「今は持っていないが、買い足すと手持ちの服との着回しが広がるアイテム」を3点提案してください。
 【カテゴリ別の点数】${catStr}
 【スタイルの傾向】${styleStr}
 【色の傾向】${colorStr}
+${gender ? `【対象】このユーザーは${gender}の服が中心なので、${gender}向けのアイテムを提案すること。` : ''}
 
 ルール:
 - 手持ちに不足・手薄なカテゴリや色を補い、着回しが広がる物を選ぶ。
 - 各提案に、手持ちとの組み合わせ理由を一言添える。
-- keyword は楽天で検索する用の簡潔な日本語（例「白 シャツ メンズ」）。
+- keyword は楽天で検索する用の簡潔な日本語（${gender ? `必ず「${gender}」を含める。例「${gender} 白シャツ」` : '例「白 シャツ」'}）。
 - JSONのみで返す。
 形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"楽天検索キーワード"}]}`;
 
@@ -828,14 +840,15 @@ window.showTrendCoord = async function() {
     const year = now.getFullYear();
     const mo = now.getMonth() + 1;
     const season = (mo>=3&&mo<=5)?'春':(mo>=6&&mo<=8)?'夏':(mo>=9&&mo<=11)?'秋':'冬';
+    const gender = getDominantGender(); // メンズ / レディース / ''（中立）
 
-    // 1) 楽天で「今季の人気ファッション」を取得（＝トレンド傾向）
+    // 1) 楽天で「今季の人気ファッション」を取得（＝トレンド傾向。対象タグが多い方に寄せる）
     let trendItems = [];
     try {
         const res = await fetch(WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rakutenSearch: { keyword: `${season} ファッション トレンド`, hits: 8, sort: '-reviewCount' } })
+            body: JSON.stringify({ rakutenSearch: { keyword: `${gender ? gender + ' ' : ''}${season} ファッション トレンド`, hits: 8, sort: '-reviewCount' } })
         });
         const data = await res.json();
         trendItems = (data.Items || []).map(x => x.Item).filter(Boolean);
@@ -1787,7 +1800,8 @@ window.openEditForm = function(existingId = null, presetData = null) {
         styles: Array.isArray(baseItem.styles) ? [...baseItem.styles] : (baseItem.style ? [baseItem.style] : []),
         seasons: Array.isArray(baseItem.seasons) ? [...baseItem.seasons] : (baseItem.season ? [baseItem.season] : []),
         memo: baseItem.memo || "",
-        size: baseItem.size || ""
+        size: baseItem.size || "",
+        gender: baseItem.gender || "男女兼用"
     };
 
     renderEditFormContent();
@@ -1818,6 +1832,10 @@ function renderEditFormContent() {
                 <div class="form-btn-group">${renderSingleBtn('category', Object.keys(CATEGORIES))}</div>
             </div>
             ${subCatHtml}
+
+            <div class="form-group"><label>対象</label>
+                <div class="form-btn-group">${renderSingleBtn('gender', GENDERS)}</div>
+            </div>
 
             <div class="form-group"><label>カラー（複数選択可）</label>
                 <div class="form-btn-group">${renderMultiBtn('colors', COLORS)}</div>
@@ -1936,7 +1954,8 @@ async function saveItemData(isNew, existingId) {
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
                 memo: currentEditData.memo,
-                size: currentEditData.size
+                size: currentEditData.size,
+                gender: currentEditData.gender
             };
             const docRef = await addDoc(collection(db, "closetItems"), docData);
             closetItems.unshift({ id: docRef.id, ...docData });
@@ -1950,7 +1969,8 @@ async function saveItemData(isNew, existingId) {
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
                 memo: currentEditData.memo,
-                size: currentEditData.size
+                size: currentEditData.size,
+                gender: currentEditData.gender
             };
             await updateDoc(doc(db, "closetItems", existingId), updateData);
             const target = closetItems.find(i => i.id === existingId);
