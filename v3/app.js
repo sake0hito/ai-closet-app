@@ -235,6 +235,12 @@ window.disableLocationWeather = function() {
 // 認証
 // =============================================
 onAuthStateChanged(auth, (user) => {
+    // ⚠️ お試し（ゲスト）モード中は、端末に残っていた別アカウントのログインセッションを一切反映しない。
+    // （共有端末などで他人のクローゼット画像が流入するのを防ぐ）。残存セッションはサインアウトして掃除する。
+    if (isGuest) {
+        if (user) { signOut(auth).catch(() => {}); }
+        return;
+    }
     if (user) {
         // ユーザーが変わった時は、前ユーザーのデータ・表示・設定を必ずリセット（情報の混在防止）
         const changed = !currentUser || currentUser.uid !== user.uid;
@@ -360,6 +366,9 @@ function guestSaveConfirm() {
 window.skipLogin = function() {
     isGuest = true;
     currentUser = null;
+    // 端末に別アカウントのログインセッションが残っていたら掃除（ゲストに他人のデータが混ざらないように）。
+    // signOut は onAuthStateChanged(null) を発火させるが、上の isGuest ガードで無害化される。
+    try { if (auth.currentUser) signOut(auth).catch(() => {}); } catch(e) {}
     authOverlay.classList.add('hidden');
     // 端末内のお試しデータを読み込み
     try { closetItems = JSON.parse(sessionStorage.getItem('guest_closet') || '[]'); } catch(e) { closetItems = []; }
