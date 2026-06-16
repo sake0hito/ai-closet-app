@@ -348,6 +348,14 @@ window.logout = async function() {
 // ===== お試し（ゲスト）モード =====
 function saveGuestCloset() { try { sessionStorage.setItem('guest_closet', JSON.stringify(closetItems)); } catch(e){} }
 function saveGuestHistory() { try { sessionStorage.setItem('guest_history', JSON.stringify(wearHistory)); } catch(e){} }
+// ゲストが初めて保存する直前に1回だけ確認（セッション中は再表示しない）。文言は実際の挙動に一致させる（タブ/ブラウザを閉じると消える。再読み込みでは残る）。
+function guestSaveConfirm() {
+    if (!isGuest) return true;
+    if (sessionStorage.getItem('guest_notice_shown') === '1') return true;
+    const ok = confirm('【お試しモード】\nここで保存するデータは、このブラウザの「お試し」中だけ保存されます。\n\n・タブやブラウザを閉じると消えます\n・他の人や他の端末には表示されません\n\nずっと残す・他の端末でも見るには、ログイン（登録）してください。\n\nこのまま保存しますか？');
+    if (ok) sessionStorage.setItem('guest_notice_shown', '1');
+    return ok;
+}
 
 window.skipLogin = function() {
     isGuest = true;
@@ -1443,9 +1451,10 @@ window.saveToHistory = async function(index) {
     }
 
     if (isGuest) {
+        if (!guestSaveConfirm()) return;
         wearHistory.unshift({ id: 'g' + now.getTime(), dateStr, isoDate, occasion: '', items, memo: '', createdAt: now.getTime() });
         saveGuestHistory();
-        alert("履歴に保存しました！（お試しモード：この端末内に保存）");
+        alert("履歴に保存しました！（お試しモード：閉じるまでこのブラウザ内に保存）");
         return;
     }
     try {
@@ -2020,6 +2029,7 @@ async function saveItemData(isNew, existingId) {
             alert(`お試しモードは${GUEST_MAX_ITEMS}点まで登録できます。もっと登録・クラウド保存するにはログインしてください。`);
             return;
         }
+        if (!guestSaveConfirm()) return;
         const fields = {
             image: currentEditData.image,
             category: currentEditData.category, subCategory: currentEditData.subCategory,
@@ -2397,6 +2407,7 @@ function loadSchedulesIntoEvents() {
 }
 window.saveSchedule = function(iso) {
     const val = (document.getElementById('day-schedule-input')?.value || '').trim();
+    if (val && !guestSaveConfirm()) return;
     const key = userKey();
     if (key) {
         if (val) userStore().setItem(`schedule_${key}_${iso}`, val);
@@ -2610,6 +2621,7 @@ window.saveHistoryEdit = async function(id) {
     const isoDate = dateInput;
 
     if (isGuest) {
+        if (!guestSaveConfirm()) return;
         const gidx = wearHistory.findIndex(h => h.id === id);
         if (gidx !== -1) Object.assign(wearHistory[gidx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
