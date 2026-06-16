@@ -76,6 +76,10 @@ const THEMES = [
 // アプリ状態
 // =============================================
 let currentUser = null;
+let isGuest = false; // ログインせず「お試しモード」で使っているか
+const GUEST_MAX_ITEMS = 10; // お試しモードのクローゼット上限
+// 設定・予定などのlocalStorageキー用（ログイン=uid、ゲスト=guest）
+function userKey() { return currentUser ? currentUser.uid : (isGuest ? 'guest' : null); }
 let googleTokenClient;
 let isCalendarConnected = false;
 let calendarEvents = {};
@@ -86,8 +90,9 @@ let userLocation = null;
 
 // ログイン中ユーザーの保存設定（位置情報・カレンダー連携）を読み込む
 function loadUserPrefs() {
-    if (!currentUser) { userLocation = null; isCalendarConnected = false; return; }
-    try { userLocation = JSON.parse(localStorage.getItem(`user_location_${currentUser.uid}`) || 'null'); }
+    const key = userKey();
+    if (!key) { userLocation = null; isCalendarConnected = false; return; }
+    try { userLocation = JSON.parse(localStorage.getItem(`user_location_${key}`) || 'null'); }
     catch { userLocation = null; }
     isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
 }
@@ -201,7 +206,7 @@ window.enableLocationWeather = function() {
             const name = await reverseGeocode(latitude, longitude);
             userLocation = { lat: latitude, lon: longitude, name };
             // ⚠️ localStorageにのみ保存（サーバー・Firebaseには一切送らない・ユーザー別）
-            if (currentUser) localStorage.setItem(`user_location_${currentUser.uid}`, JSON.stringify(userLocation));
+            if (userKey()) localStorage.setItem(`user_location_${userKey()}`, JSON.stringify(userLocation));
             await fetchWeather();
             navigate('settings');
         },
@@ -218,7 +223,7 @@ window.enableLocationWeather = function() {
 
 window.disableLocationWeather = function() {
     userLocation = null;
-    if (currentUser) localStorage.removeItem(`user_location_${currentUser.uid}`);
+    if (userKey()) localStorage.removeItem(`user_location_${userKey()}`);
     fetchWeather();
     navigate('settings');
 };
@@ -323,11 +328,41 @@ document.getElementById('btn-email-login').addEventListener('click', async () =>
 });
 
 window.logout = async function() {
+    if (isGuest) {
+        // ゲストはログアウト＝お試し終了。ログイン画面に戻す（端末内データは残す）
+        isGuest = false;
+        closetItems = []; wearHistory = []; isDataLoaded = false;
+        weeklyOutfits = buildInitialWeeklyOutfits();
+        authOverlay.classList.remove('hidden');
+        return;
+    }
     if (confirm("ログアウトしますか？")) {
         await signOut(auth);
         navigate('home');
     }
 };
+
+// ===== お試し（ゲスト）モード =====
+function saveGuestCloset() { try { localStorage.setItem('guest_closet', JSON.stringify(closetItems)); } catch(e){} }
+function saveGuestHistory() { try { localStorage.setItem('guest_history', JSON.stringify(wearHistory)); } catch(e){} }
+
+window.skipLogin = function() {
+    isGuest = true;
+    currentUser = null;
+    authOverlay.classList.add('hidden');
+    // 端末内のお試しデータを読み込み
+    try { closetItems = JSON.parse(localStorage.getItem('guest_closet') || '[]'); } catch(e) { closetItems = []; }
+    try { wearHistory = JSON.parse(localStorage.getItem('guest_history') || '[]'); } catch(e) { wearHistory = []; }
+    closetItems.sort((a, b) => (b.createdAt||0) - (a.createdAt||0));
+    isDataLoaded = true;
+    loadUserPrefs();
+    fetchWeather();
+    loadSchedulesIntoEvents();
+    generateWeeklyOutfitsFromCloset();
+    navigate('home');
+};
+const _btnSkip = document.getElementById('btn-skip-login');
+if (_btnSkip) _btnSkip.addEventListener('click', () => window.skipLogin());
 
 // =============================================
 // Firebase データ取得
@@ -1242,7 +1277,7 @@ const routes = {
             if (!isDataLoaded) {
                 return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
             }
-            let html = `
+            let html = isGuest ? '' : `
             <button onclick="openAddHistoryModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
                 <i data-lucide="plus-circle" class="inline-icon"></i> 着用を手動で記録する
             </button>`;
@@ -1323,10 +1358,17 @@ const routes = {
                 <div id="ai-test-result" style="display:none; margin-top:12px; background:var(--surface-solid); border-radius:8px; padding:12px; font-size:0.85rem; line-height:1.6;"></div>
             </div>
 
+            ${isGuest ? `
+            <div class="card mt-4" style="text-align:center;">
+                <p style="font-weight:bold; margin-bottom:6px;">🧪 お試しモード</p>
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">データはこの端末内のみに保存されます（最大${GUEST_MAX_ITEMS}点・他の端末とは同期しません）。<br>クラウド保存・同期するにはログインしてください。</p>
+                <button onclick="logout()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">ログイン / 新規登録する</button>
+            </div>
+            ` : `
             <div style="text-align:center; margin-top:32px; padding-bottom:16px;">
                 <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:8px;">ログイン中: ${currentUser ? (currentUser.email || 'Googleアカウント') : ''}</p>
                 <button onclick="logout()" style="background:transparent; color:#ef4444; border:1px solid #ef4444; padding:8px 16px; border-radius:20px; font-weight:bold; cursor:pointer;">ログアウト</button>
-            </div>`;
+            </div>`}`;
         }
     }
 };
@@ -1378,7 +1420,7 @@ function navigate(route) {
 // 着用履歴
 // =============================================
 window.saveToHistory = async function(index) {
-    if (!currentUser) return;
+    if (!currentUser && !isGuest) return;
     const outfit = weeklyOutfits[index];
     closeModal();
     const now = new Date();
@@ -1397,6 +1439,12 @@ window.saveToHistory = async function(index) {
         items.push({ image: outfit.image, category: 'コーデ', subCategory: '', title: outfit.title });
     }
 
+    if (isGuest) {
+        wearHistory.unshift({ id: 'g' + now.getTime(), dateStr, isoDate, occasion: '', items, memo: '', createdAt: now.getTime() });
+        saveGuestHistory();
+        alert("履歴に保存しました！（お試しモード：この端末内に保存）");
+        return;
+    }
     try {
         const docData = {
             userId: currentUser.uid,
@@ -1633,6 +1681,13 @@ window.toggleEditMode = function() {
 window.deleteSelected = async function() {
     if (selectedItems.size === 0) return;
     if (confirm(`選択した${selectedItems.size}件を削除しますか？`)) {
+        if (isGuest) {
+            closetItems = closetItems.filter(item => !selectedItems.has(item.id));
+            saveGuestCloset();
+            toggleEditMode();
+            navigate('closet');
+            return;
+        }
         try {
             for (let id of selectedItems) {
                 const item = closetItems.find(i => i.id === id);
@@ -1904,7 +1959,7 @@ function renderEditFormContent() {
             </div>
 
             <button id="btn-save-item" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
-                ${isNew ? '☁️ クラウドに保存' : '変更を保存'}
+                ${isNew ? (isGuest ? '📱 保存（お試し・端末内）' : '☁️ クラウドに保存') : '変更を保存'}
             </button>
             <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
         </div>
@@ -1954,6 +2009,33 @@ window.toggleFormMulti = function(group, val) {
 };
 
 async function saveItemData(isNew, existingId) {
+    // お試し（ゲスト）モード：端末内(localStorage)に保存。画像はそのまま(base64)、クラウド不使用
+    if (isGuest) {
+        currentEditData.memo = document.getElementById('input-memo')?.value || '';
+        currentEditData.size = document.getElementById('input-size')?.value || '';
+        if (isNew && closetItems.length >= GUEST_MAX_ITEMS) {
+            alert(`お試しモードは${GUEST_MAX_ITEMS}点まで登録できます。もっと登録・クラウド保存するにはログインしてください。`);
+            return;
+        }
+        const fields = {
+            image: currentEditData.image,
+            category: currentEditData.category, subCategory: currentEditData.subCategory,
+            colors: currentEditData.colors, lightness: currentEditData.lightness,
+            styles: currentEditData.styles, seasons: currentEditData.seasons,
+            memo: currentEditData.memo, size: currentEditData.size, gender: currentEditData.gender
+        };
+        if (isNew) {
+            closetItems.unshift({ id: 'g' + Date.now(), createdAt: Date.now(), ...fields });
+            nativeCameraInput.value = '';
+        } else {
+            const target = closetItems.find(i => i.id === existingId);
+            if (target) Object.assign(target, fields);
+        }
+        saveGuestCloset();
+        closeModal();
+        navigate('closet');
+        return;
+    }
     if (!currentUser) return;
     const btnSave = document.getElementById('btn-save-item');
     if (!btnSave) return;
@@ -2298,8 +2380,9 @@ window.toggleHistorySort = function() {
 
 // 予定（ユーザー自身が入力）：端末内（localStorage）にユーザー別・日付別で保存
 function getSchedule(iso) {
-    if (!currentUser) return '';
-    return localStorage.getItem(`schedule_${currentUser.uid}_${iso}`) || '';
+    const key = userKey();
+    if (!key) return '';
+    return localStorage.getItem(`schedule_${key}_${iso}`) || '';
 }
 // 1週間分の自前予定を calendarEvents に反映（ホームのコーデ提案・予定バッジに使う）
 function loadSchedulesIntoEvents() {
@@ -2311,9 +2394,10 @@ function loadSchedulesIntoEvents() {
 }
 window.saveSchedule = function(iso) {
     const val = (document.getElementById('day-schedule-input')?.value || '').trim();
-    if (currentUser) {
-        if (val) localStorage.setItem(`schedule_${currentUser.uid}_${iso}`, val);
-        else localStorage.removeItem(`schedule_${currentUser.uid}_${iso}`);
+    const key = userKey();
+    if (key) {
+        if (val) localStorage.setItem(`schedule_${key}_${iso}`, val);
+        else localStorage.removeItem(`schedule_${key}_${iso}`);
     }
     loadSchedulesIntoEvents();
     if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
@@ -2522,6 +2606,15 @@ window.saveHistoryEdit = async function(id) {
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
     const isoDate = dateInput;
 
+    if (isGuest) {
+        const gidx = wearHistory.findIndex(h => h.id === id);
+        if (gidx !== -1) Object.assign(wearHistory[gidx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+        saveGuestHistory();
+        closeModal();
+        navigate('history');
+        return;
+    }
     try {
         await updateDoc(doc(db, "history", id), { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
         const idx = wearHistory.findIndex(h => h.id === id);
@@ -2540,6 +2633,12 @@ window.saveHistoryEdit = async function(id) {
 // =============================================
 window.deleteHistoryItem = async function(id) {
     if (!confirm('この着用履歴を削除しますか？\nこの操作は取り消せません。')) return;
+    if (isGuest) {
+        wearHistory = wearHistory.filter(h => h.id !== id);
+        saveGuestHistory();
+        navigate('history');
+        return;
+    }
     try {
         await deleteDoc(doc(db, "history", id));
         wearHistory = wearHistory.filter(h => h.id !== id);
