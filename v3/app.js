@@ -824,6 +824,79 @@ window.openMapSearch = function(keyword) {
     window.open(url, '_blank');
 };
 
+// 「お店を探す」モーダル
+window.openMapModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <h3 class="section-title">🗺 お店を探す</h3>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">近くのお店をGoogleマップで探します。${userLocation ? `（現在地：${userLocation.name}周辺）` : '（設定で現在地をオンにすると精度が上がります）'}</p>
+            <div class="quick-prompts">
+                <button class="quick-prompt-btn" onclick="openMapSearch('古着屋')">古着屋</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('ユニクロ')">ユニクロ</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('GU')">GU</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('セレクトショップ 服')">セレクトショップ</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('無印良品')">無印良品</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('しまむら')">しまむら</button>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="text" id="map-search-input" class="input-field" placeholder="例：ヴィンテージ デニム ／ コート 古着" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') openMapSearch()">
+                <button onclick="openMapSearch()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
+                    <i data-lucide="map-pin" style="width:18px; height:18px;"></i>
+                </button>
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+// 「コーデ検証ルーム」モーダル（選択・分析もこのモーダル内で完結）
+window.openCoordRoomModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">コーデ検証ルーム</h3>
+            <div id="coord-room">
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>
+                ${renderCoordRoom()}
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+// 「AIスタイリスト相談」モーダル
+window.openChatModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">💬 AIスタイリストに相談</h3>
+            <div class="quick-prompts">
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('予定に関係なく、気分が上がるおすすめコーデを提案して')">気分でコーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('私のクローゼットのスタイル傾向を教えて')">傾向分析</button>
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="chat-input" class="input-field" placeholder="例：カジュアルなコーデが知りたい" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') sendChat()">
+                <button onclick="sendChat()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
+                    <i data-lucide="send" style="width:18px; height:18px;"></i>
+                </button>
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    const chatEl = document.getElementById('chat-messages');
+    if (chatEl) renderChatMessages(chatEl);
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
 // 今季のトレンドコーデ（楽天の人気商品＝トレンド傾向 ＋ Geminiで手持ち着こなし提案）
 window.showTrendCoord = async function() {
     modalContainer.innerHTML = `
@@ -1066,61 +1139,20 @@ const routes = {
 
             html += `</div>`;
 
-            // 今季のトレンドコーデ（楽天の人気商品＋AI）
+            // メニュー：5機能をコンパクトなタイルに。タップでモーダル表示
+            const tile = (onclick, icon, label, color) =>
+                `<div class="card" onclick="${onclick}" style="cursor:pointer; margin-bottom:0; text-align:center; padding:18px 10px;">
+                    <i data-lucide="${icon}" style="width:28px; height:28px; color:${color};"></i>
+                    <p style="font-weight:700; margin-top:8px; font-size:0.88rem;">${label}</p>
+                </div>`;
             html += `
-            <button onclick="showTrendCoord()" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:14px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
-                <i data-lucide="trending-up" class="inline-icon"></i> 今季のトレンドコーデを見る
-            </button>
-            `;
-
-            // お店を探す（Googleマップ検索リンク・無料）
-            html += `
-            <h3 class="section-title mt-4">🗺 お店を探す</h3>
-            <div class="card">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">近くのお店をGoogleマップで探します。${userLocation ? `（現在地：${userLocation.name}周辺）` : '（設定で現在地をオンにすると精度が上がります）'}</p>
-                <div class="quick-prompts">
-                    <button class="quick-prompt-btn" onclick="openMapSearch('古着屋')">古着屋</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('ユニクロ')">ユニクロ</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('GU')">GU</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('セレクトショップ 服')">セレクトショップ</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('無印良品')">無印良品</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('しまむら')">しまむら</button>
-                </div>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <input type="text" id="map-search-input" class="input-field" placeholder="例：ヴィンテージ デニム ／ コート 古着" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') openMapSearch()">
-                    <button onclick="openMapSearch()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
-                        <i data-lucide="map-pin" style="width:18px; height:18px;"></i>
-                    </button>
-                </div>
-            </div>
-            `;
-
-            // コーデ検証ルーム
-            html += `
-            <h3 class="section-title mt-4">コーデ検証ルーム</h3>
-            <div class="card" id="coord-room">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>
-                ${renderCoordRoom()}
-            </div>
-            `;
-
-            // AIチャット
-            html += `
-            <h3 class="section-title mt-4">💬 AIスタイリストに相談</h3>
-            <div class="card" style="padding:16px;">
-                <div class="quick-prompts">
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('予定に関係なく、気分が上がるおすすめコーデを提案して')">気分でコーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('私のクローゼットのスタイル傾向を教えて')">傾向分析</button>
-                </div>
-                <div class="chat-messages" id="chat-messages"></div>
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="chat-input" class="input-field" placeholder="例：カジュアルなコーデが知りたい" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') sendChat()">
-                    <button onclick="sendChat()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
-                        <i data-lucide="send" style="width:18px; height:18px;"></i>
-                    </button>
-                </div>
+            <h3 class="section-title mt-4">メニュー</h3>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                ${tile("showTrendCoord()",     "trending-up",    "今季のトレンドコーデ", "var(--accent-color)")}
+                ${tile("openCoordRoomModal()", "shirt",          "コーデ検証ルーム",     "var(--primary-color)")}
+                ${tile("openChatModal()",      "message-circle", "AIスタイリスト相談",   "var(--primary-color)")}
+                ${tile("showRecommendItems()", "shopping-bag",   "買い足しおすすめ",     "var(--accent-color)")}
+                ${tile("openMapModal()",       "map-pin",        "お店を探す",           "var(--primary-color)")}
             </div>
             `;
 
@@ -1161,10 +1193,6 @@ const routes = {
                         <p style="font-size:0.75rem; color:var(--text-secondary); text-align:center; margin-top:8px;">登録中の服 ${closetItems.length}点から分析</p>
                     </div>`;
                 }
-                html += `
-                <button onclick="showRecommendItems()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:13px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
-                    <i data-lucide="shopping-bag" class="inline-icon"></i> 買い足しおすすめを見る
-                </button>`;
             }
 
             const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
@@ -2009,7 +2037,7 @@ window.openCoordPicker = function(slot) {
                 ? '<p style="color:var(--text-secondary); text-align:center; padding:20px;">該当する服がありません。<br>クローゼットに追加してください。</p>'
                 : `<div class="closet-grid">${items.map(item => `<div class="closet-item" onclick="selectForCoord('${item.id}')"><img src="${item.image}" alt="clothing"></div>`).join('')}</div>`
             }
-            <button onclick="closeModal()" class="btn-outline text-center mt-4">キャンセル</button>
+            <button onclick="openCoordRoomModal()" class="btn-outline text-center mt-4">戻る</button>
         </div>
     `;
     modalContainer.classList.remove('hidden');
@@ -2097,11 +2125,8 @@ function renderCoordRoom() {
 }
 
 function refreshCoordRoom() {
-    const room = document.getElementById('coord-room');
-    if (room) {
-        room.innerHTML = `<p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>` + renderCoordRoom();
-        lucide.createIcons();
-    }
+    // コーデ検証ルームはモーダル表示なので、モーダルごと再描画して状態を反映
+    if (document.getElementById('coord-room')) openCoordRoomModal();
 }
 
 window.setCoordType = function(type) {
@@ -2122,8 +2147,7 @@ window.selectForCoord = function(id) {
     else if (currentTargetSlot === '靴') coordState.shoes = item;
     else if (currentTargetSlot === '帽子') coordState.hat = item;
     else if (currentTargetSlot === '小物') coordState.accessory = item;
-    closeModal();
-    refreshCoordRoom();
+    refreshCoordRoom(); // ピッカー → コーデ検証ルームのモーダルに戻す（選択を反映）
 };
 
 window.clearCoord = function(slotKey) {
