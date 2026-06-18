@@ -35,8 +35,9 @@ const CATEGORIES = {
     "ワンピース": [],
     "ドレス": [],
     "スーツ": [],
-    "小物": ["バッグ", "ベルト", "アクセサリー", "眼鏡", "サングラス", "時計", "マフラー", "手袋", "ストール", "スカーフ", "その他の小物"]
+    "小物": ["バッグ", "ベルト", "ネクタイ", "アクセサリー", "眼鏡", "サングラス", "時計", "マフラー", "手袋", "ストール", "スカーフ", "その他の小物"]
 };
+const GENDERS = ["メンズ", "レディース", "男女兼用"];
 const COLORS = ["赤", "青", "黄", "緑", "むらさき", "ピンク", "オレンジ", "ベージュ", "グレー", "黒", "白"];
 const STYLES = ["カジュアル系", "きれいめ（シンプル）系", "エレガント系", "クール系", "フォーマル系", "ストリート系", "フェミニン・ガーリー系", "アウトドア系", "アメカジ系"];
 const SEASONS = ["春", "夏", "秋", "冬", "オールシーズン"];
@@ -75,6 +76,13 @@ const THEMES = [
 // アプリ状態
 // =============================================
 let currentUser = null;
+let isGuest = false; // ログインせず「お試しモード」で使っているか
+const GUEST_MAX_ITEMS = 10; // お試しモードのクローゼット上限
+// 設定・予定などのlocalStorageキー用（ログイン=uid、ゲスト=guest）
+function userKey() { return currentUser ? currentUser.uid : (isGuest ? 'guest' : null); }
+// ゲストの保存先は sessionStorage（タブ/ブラウザを閉じると消える＝同じ端末でも別のゲストとデータがかぶらない）。
+// ログイン済みは localStorage（端末に保存して次回も使える）。
+function userStore() { return isGuest ? sessionStorage : localStorage; }
 let googleTokenClient;
 let isCalendarConnected = false;
 let calendarEvents = {};
@@ -85,8 +93,9 @@ let userLocation = null;
 
 // ログイン中ユーザーの保存設定（位置情報・カレンダー連携）を読み込む
 function loadUserPrefs() {
-    if (!currentUser) { userLocation = null; isCalendarConnected = false; return; }
-    try { userLocation = JSON.parse(localStorage.getItem(`user_location_${currentUser.uid}`) || 'null'); }
+    const key = userKey();
+    if (!key) { userLocation = null; isCalendarConnected = false; return; }
+    try { userLocation = JSON.parse(userStore().getItem(`user_location_${key}`) || 'null'); }
     catch { userLocation = null; }
     isCalendarConnected = localStorage.getItem('google_calendar_connected') === 'true';
 }
@@ -200,7 +209,7 @@ window.enableLocationWeather = function() {
             const name = await reverseGeocode(latitude, longitude);
             userLocation = { lat: latitude, lon: longitude, name };
             // ⚠️ localStorageにのみ保存（サーバー・Firebaseには一切送らない・ユーザー別）
-            if (currentUser) localStorage.setItem(`user_location_${currentUser.uid}`, JSON.stringify(userLocation));
+            if (userKey()) userStore().setItem(`user_location_${userKey()}`, JSON.stringify(userLocation));
             await fetchWeather();
             navigate('settings');
         },
@@ -217,7 +226,7 @@ window.enableLocationWeather = function() {
 
 window.disableLocationWeather = function() {
     userLocation = null;
-    if (currentUser) localStorage.removeItem(`user_location_${currentUser.uid}`);
+    if (userKey()) userStore().removeItem(`user_location_${userKey()}`);
     fetchWeather();
     navigate('settings');
 };
@@ -226,6 +235,12 @@ window.disableLocationWeather = function() {
 // 認証
 // =============================================
 onAuthStateChanged(auth, (user) => {
+    // ⚠️ お試し（ゲスト）モード中は、端末に残っていた別アカウントのログインセッションを一切反映しない。
+    // （共有端末などで他人のクローゼット画像が流入するのを防ぐ）。残存セッションはサインアウトして掃除する。
+    if (isGuest) {
+        if (user) { signOut(auth).catch(() => {}); }
+        return;
+    }
     if (user) {
         // ユーザーが変わった時は、前ユーザーのデータ・表示・設定を必ずリセット（情報の混在防止）
         const changed = !currentUser || currentUser.uid !== user.uid;
@@ -322,11 +337,52 @@ document.getElementById('btn-email-login').addEventListener('click', async () =>
 });
 
 window.logout = async function() {
+    if (isGuest) {
+        // ゲストはログアウト＝お試し終了。ログイン画面に戻す（端末内データは残す）
+        isGuest = false;
+        closetItems = []; wearHistory = []; isDataLoaded = false;
+        weeklyOutfits = buildInitialWeeklyOutfits();
+        authOverlay.classList.remove('hidden');
+        return;
+    }
     if (confirm("ログアウトしますか？")) {
         await signOut(auth);
         navigate('home');
     }
 };
+
+// ===== お試し（ゲスト）モード =====
+function saveGuestCloset() { try { sessionStorage.setItem('guest_closet', JSON.stringify(closetItems)); } catch(e){} }
+function saveGuestHistory() { try { sessionStorage.setItem('guest_history', JSON.stringify(wearHistory)); } catch(e){} }
+// ゲストが初めて保存する直前に1回だけ確認（セッション中は再表示しない）。文言は実際の挙動に一致させる（タブ/ブラウザを閉じると消える。再読み込みでは残る）。
+function guestSaveConfirm() {
+    if (!isGuest) return true;
+    if (sessionStorage.getItem('guest_notice_shown') === '1') return true;
+    const ok = confirm('【お試しモード】\nここで保存するデータは、このブラウザの「お試し」中だけ保存されます。\n\n・タブやブラウザを閉じると消えます\n・他の人や他の端末には表示されません\n\nずっと残す・他の端末でも見るには、ログイン（登録）してください。\n\nこのまま保存しますか？');
+    if (ok) sessionStorage.setItem('guest_notice_shown', '1');
+    return ok;
+}
+
+window.skipLogin = function() {
+    isGuest = true;
+    currentUser = null;
+    // 端末に別アカウントのログインセッションが残っていたら掃除（ゲストに他人のデータが混ざらないように）。
+    // signOut は onAuthStateChanged(null) を発火させるが、上の isGuest ガードで無害化される。
+    try { if (auth.currentUser) signOut(auth).catch(() => {}); } catch(e) {}
+    authOverlay.classList.add('hidden');
+    // 端末内のお試しデータを読み込み
+    try { closetItems = JSON.parse(sessionStorage.getItem('guest_closet') || '[]'); } catch(e) { closetItems = []; }
+    try { wearHistory = JSON.parse(sessionStorage.getItem('guest_history') || '[]'); } catch(e) { wearHistory = []; }
+    closetItems.sort((a, b) => (b.createdAt||0) - (a.createdAt||0));
+    isDataLoaded = true;
+    loadUserPrefs();
+    fetchWeather();
+    loadSchedulesIntoEvents();
+    generateWeeklyOutfitsFromCloset();
+    navigate('home');
+};
+const _btnSkip = document.getElementById('btn-skip-login');
+if (_btnSkip) _btnSkip.addEventListener('click', () => window.skipLogin());
 
 // =============================================
 // Firebase データ取得
@@ -529,11 +585,11 @@ function initStyleChart() {
 // =============================================
 // 週間コーデ生成（所持服優先・前日被り防止・履歴反映）
 // =============================================
-// コーデ提案ルール（localStorageに保存。アウター必須判定に使用）
+// コーデ提案ルール（ログイン=localStorage / ゲスト=sessionStorageに保存。アウター必須判定に使用）
 function getCoordRules() {
     try {
         return Object.assign({ outerCold: true, outerTemp: 15, outerRain: true },
-            JSON.parse(localStorage.getItem('coord_rules') || '{}'));
+            JSON.parse(userStore().getItem('coord_rules') || '{}'));
     } catch {
         return { outerCold: true, outerTemp: 15, outerRain: true };
     }
@@ -542,7 +598,7 @@ function getCoordRules() {
 window.setOuterRule = function(key, value) {
     const rules = getCoordRules();
     rules[key] = value;
-    localStorage.setItem('coord_rules', JSON.stringify(rules));
+    userStore().setItem('coord_rules', JSON.stringify(rules));
     if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
     navigate('settings');
 };
@@ -699,6 +755,15 @@ window.sendQuickPrompt = function(prompt) {
 };
 
 // 買い足しおすすめ（クローゼットの傾向分析 ＋ Geminiで不足アイテム提案 ＋ 楽天で実商品）
+// クローゼットで一番多い「対象」タグを返す（メンズ/レディース。同数や無しは ''＝中立）
+function getDominantGender() {
+    const counts = { 'メンズ': 0, 'レディース': 0 };
+    closetItems.forEach(it => { if (it.gender === 'メンズ' || it.gender === 'レディース') counts[it.gender]++; });
+    if (counts['メンズ'] === 0 && counts['レディース'] === 0) return '';
+    if (counts['メンズ'] === counts['レディース']) return '';
+    return counts['メンズ'] > counts['レディース'] ? 'メンズ' : 'レディース';
+}
+
 window.showRecommendItems = async function() {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
@@ -720,17 +785,19 @@ window.showRecommendItems = async function() {
     const catStr = Object.entries(catCounts).map(([k, v]) => `${k}:${v}点`).join('、') || 'なし';
     const styleStr = Object.entries(styleCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
     const colorStr = Object.entries(colorCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join('、') || 'なし';
+    const gender = getDominantGender(); // メンズ / レディース / ''（中立）
 
     // Geminiに「買い足すと着回しが広がるアイテム」を提案させる（JSON）
     const prompt = `あなたはプロのスタイリストです。次の人のクローゼットを分析し、「今は持っていないが、買い足すと手持ちの服との着回しが広がるアイテム」を3点提案してください。
 【カテゴリ別の点数】${catStr}
 【スタイルの傾向】${styleStr}
 【色の傾向】${colorStr}
+${gender ? `【対象】このユーザーは${gender}の服が中心なので、${gender}向けのアイテムを提案すること。` : ''}
 
 ルール:
 - 手持ちに不足・手薄なカテゴリや色を補い、着回しが広がる物を選ぶ。
 - 各提案に、手持ちとの組み合わせ理由を一言添える。
-- keyword は楽天で検索する用の簡潔な日本語（例「白 シャツ メンズ」）。
+- keyword は楽天で検索する用の簡潔な日本語（${gender ? `必ず「${gender}」を含める。例「${gender} 白シャツ」` : '例「白 シャツ」'}）。
 - JSONのみで返す。
 形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"楽天検索キーワード"}]}`;
 
@@ -812,6 +879,79 @@ window.openMapSearch = function(keyword) {
     window.open(url, '_blank');
 };
 
+// 「お店を探す」モーダル
+window.openMapModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <h3 class="section-title">🗺 お店を探す</h3>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">近くのお店をGoogleマップで探します。${userLocation ? `（現在地：${userLocation.name}周辺）` : '（設定で現在地をオンにすると精度が上がります）'}</p>
+            <div class="quick-prompts">
+                <button class="quick-prompt-btn" onclick="openMapSearch('古着屋')">古着屋</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('ユニクロ')">ユニクロ</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('GU')">GU</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('セレクトショップ 服')">セレクトショップ</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('無印良品')">無印良品</button>
+                <button class="quick-prompt-btn" onclick="openMapSearch('しまむら')">しまむら</button>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="text" id="map-search-input" class="input-field" placeholder="例：ヴィンテージ デニム ／ コート 古着" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') openMapSearch()">
+                <button onclick="openMapSearch()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
+                    <i data-lucide="map-pin" style="width:18px; height:18px;"></i>
+                </button>
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+// 「コーデ検証ルーム」モーダル（選択・分析もこのモーダル内で完結）
+window.openCoordRoomModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">コーデ検証ルーム</h3>
+            <div id="coord-room">
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>
+                ${renderCoordRoom()}
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
+// 「AIスタイリスト相談」モーダル
+window.openChatModal = function() {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">💬 AIスタイリストに相談</h3>
+            <div class="quick-prompts">
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('予定に関係なく、気分が上がるおすすめコーデを提案して')">気分でコーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
+                <button class="quick-prompt-btn" onclick="sendQuickPrompt('私のクローゼットのスタイル傾向を教えて')">傾向分析</button>
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div style="display:flex; gap:8px;">
+                <input type="text" id="chat-input" class="input-field" placeholder="例：カジュアルなコーデが知りたい" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') sendChat()">
+                <button onclick="sendChat()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
+                    <i data-lucide="send" style="width:18px; height:18px;"></i>
+                </button>
+            </div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    const chatEl = document.getElementById('chat-messages');
+    if (chatEl) renderChatMessages(chatEl);
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
 // 今季のトレンドコーデ（楽天の人気商品＝トレンド傾向 ＋ Geminiで手持ち着こなし提案）
 window.showTrendCoord = async function() {
     modalContainer.innerHTML = `
@@ -828,14 +968,15 @@ window.showTrendCoord = async function() {
     const year = now.getFullYear();
     const mo = now.getMonth() + 1;
     const season = (mo>=3&&mo<=5)?'春':(mo>=6&&mo<=8)?'夏':(mo>=9&&mo<=11)?'秋':'冬';
+    const gender = getDominantGender(); // メンズ / レディース / ''（中立）
 
-    // 1) 楽天で「今季の人気ファッション」を取得（＝トレンド傾向）
+    // 1) 楽天で「今季の人気ファッション」を取得（＝トレンド傾向。対象タグが多い方に寄せる）
     let trendItems = [];
     try {
         const res = await fetch(WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rakutenSearch: { keyword: `${season} ファッション トレンド`, hits: 8, sort: '-reviewCount' } })
+            body: JSON.stringify({ rakutenSearch: { keyword: `${gender ? gender + ' ' : ''}${season} ファッション トレンド`, hits: 8, sort: '-reviewCount' } })
         });
         const data = await res.json();
         trendItems = (data.Items || []).map(x => x.Item).filter(Boolean);
@@ -1053,61 +1194,20 @@ const routes = {
 
             html += `</div>`;
 
-            // 今季のトレンドコーデ（楽天の人気商品＋AI）
+            // メニュー：5機能をコンパクトなタイルに。タップでモーダル表示
+            const tile = (onclick, icon, label, color) =>
+                `<div class="card" onclick="${onclick}" style="cursor:pointer; margin-bottom:0; text-align:center; padding:18px 10px;">
+                    <i data-lucide="${icon}" style="width:28px; height:28px; color:${color};"></i>
+                    <p style="font-weight:700; margin-top:8px; font-size:0.88rem;">${label}</p>
+                </div>`;
             html += `
-            <button onclick="showTrendCoord()" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:14px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
-                <i data-lucide="trending-up" class="inline-icon"></i> 今季のトレンドコーデを見る
-            </button>
-            `;
-
-            // お店を探す（Googleマップ検索リンク・無料）
-            html += `
-            <h3 class="section-title mt-4">🗺 お店を探す</h3>
-            <div class="card">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">近くのお店をGoogleマップで探します。${userLocation ? `（現在地：${userLocation.name}周辺）` : '（設定で現在地をオンにすると精度が上がります）'}</p>
-                <div class="quick-prompts">
-                    <button class="quick-prompt-btn" onclick="openMapSearch('古着屋')">古着屋</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('ユニクロ')">ユニクロ</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('GU')">GU</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('セレクトショップ 服')">セレクトショップ</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('無印良品')">無印良品</button>
-                    <button class="quick-prompt-btn" onclick="openMapSearch('しまむら')">しまむら</button>
-                </div>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <input type="text" id="map-search-input" class="input-field" placeholder="例：ヴィンテージ デニム ／ コート 古着" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') openMapSearch()">
-                    <button onclick="openMapSearch()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
-                        <i data-lucide="map-pin" style="width:18px; height:18px;"></i>
-                    </button>
-                </div>
-            </div>
-            `;
-
-            // コーデ検証ルーム
-            html += `
-            <h3 class="section-title mt-4">コーデ検証ルーム</h3>
-            <div class="card" id="coord-room">
-                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>
-                ${renderCoordRoom()}
-            </div>
-            `;
-
-            // AIチャット
-            html += `
-            <h3 class="section-title mt-4">💬 AIスタイリストに相談</h3>
-            <div class="card" style="padding:16px;">
-                <div class="quick-prompts">
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('今日の天気に合うコーデを提案して')">今日の天気×コーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('予定に関係なく、気分が上がるおすすめコーデを提案して')">気分でコーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('明日のコーデを提案して')">明日のコーデ</button>
-                    <button class="quick-prompt-btn" onclick="sendQuickPrompt('私のクローゼットのスタイル傾向を教えて')">傾向分析</button>
-                </div>
-                <div class="chat-messages" id="chat-messages"></div>
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="chat-input" class="input-field" placeholder="例：カジュアルなコーデが知りたい" style="flex:1; padding:10px 12px;" onkeydown="if(event.key==='Enter') sendChat()">
-                    <button onclick="sendChat()" style="background:var(--primary-color); color:white; border:none; padding:10px 14px; border-radius:var(--border-radius-md); cursor:pointer; flex-shrink:0;">
-                        <i data-lucide="send" style="width:18px; height:18px;"></i>
-                    </button>
-                </div>
+            <h3 class="section-title mt-4">メニュー</h3>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                ${tile("showTrendCoord()",     "trending-up",    "今季のトレンドコーデ", "var(--accent-color)")}
+                ${tile("openCoordRoomModal()", "shirt",          "コーデ検証ルーム",     "var(--primary-color)")}
+                ${tile("openChatModal()",      "message-circle", "AIスタイリスト相談",   "var(--primary-color)")}
+                ${tile("showRecommendItems()", "shopping-bag",   "買い足しおすすめ",     "var(--accent-color)")}
+                ${tile("openMapModal()",       "map-pin",        "お店を探す",           "var(--primary-color)")}
             </div>
             `;
 
@@ -1148,10 +1248,6 @@ const routes = {
                         <p style="font-size:0.75rem; color:var(--text-secondary); text-align:center; margin-top:8px;">登録中の服 ${closetItems.length}点から分析</p>
                     </div>`;
                 }
-                html += `
-                <button onclick="showRecommendItems()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:13px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
-                    <i data-lucide="shopping-bag" class="inline-icon"></i> 買い足しおすすめを見る
-                </button>`;
             }
 
             const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
@@ -1201,7 +1297,7 @@ const routes = {
             if (!isDataLoaded) {
                 return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
             }
-            let html = `
+            let html = isGuest ? '' : `
             <button onclick="openAddHistoryModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
                 <i data-lucide="plus-circle" class="inline-icon"></i> 着用を手動で記録する
             </button>`;
@@ -1282,10 +1378,17 @@ const routes = {
                 <div id="ai-test-result" style="display:none; margin-top:12px; background:var(--surface-solid); border-radius:8px; padding:12px; font-size:0.85rem; line-height:1.6;"></div>
             </div>
 
+            ${isGuest ? `
+            <div class="card mt-4" style="text-align:center;">
+                <p style="font-weight:bold; margin-bottom:6px;">🧪 お試しモード</p>
+                <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">データはこの端末内のみに保存されます（最大${GUEST_MAX_ITEMS}点・他の端末とは同期しません）。<br>クラウド保存・同期するにはログインしてください。</p>
+                <button onclick="logout()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">ログイン / 新規登録する</button>
+            </div>
+            ` : `
             <div style="text-align:center; margin-top:32px; padding-bottom:16px;">
                 <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:8px;">ログイン中: ${currentUser ? (currentUser.email || 'Googleアカウント') : ''}</p>
                 <button onclick="logout()" style="background:transparent; color:#ef4444; border:1px solid #ef4444; padding:8px 16px; border-radius:20px; font-weight:bold; cursor:pointer;">ログアウト</button>
-            </div>`;
+            </div>`}`;
         }
     }
 };
@@ -1337,7 +1440,7 @@ function navigate(route) {
 // 着用履歴
 // =============================================
 window.saveToHistory = async function(index) {
-    if (!currentUser) return;
+    if (!currentUser && !isGuest) return;
     const outfit = weeklyOutfits[index];
     closeModal();
     const now = new Date();
@@ -1356,6 +1459,13 @@ window.saveToHistory = async function(index) {
         items.push({ image: outfit.image, category: 'コーデ', subCategory: '', title: outfit.title });
     }
 
+    if (isGuest) {
+        if (!guestSaveConfirm()) return;
+        wearHistory.unshift({ id: 'g' + now.getTime(), dateStr, isoDate, occasion: '', items, memo: '', createdAt: now.getTime() });
+        saveGuestHistory();
+        alert("履歴に保存しました！（お試しモード：閉じるまでこのブラウザ内に保存）");
+        return;
+    }
     try {
         const docData = {
             userId: currentUser.uid,
@@ -1592,6 +1702,13 @@ window.toggleEditMode = function() {
 window.deleteSelected = async function() {
     if (selectedItems.size === 0) return;
     if (confirm(`選択した${selectedItems.size}件を削除しますか？`)) {
+        if (isGuest) {
+            closetItems = closetItems.filter(item => !selectedItems.has(item.id));
+            saveGuestCloset();
+            toggleEditMode();
+            navigate('closet');
+            return;
+        }
         try {
             for (let id of selectedItems) {
                 const item = closetItems.find(i => i.id === id);
@@ -1738,7 +1855,7 @@ async function showAIAnalysisModal() {
     // Gemini AIで画像解析を実行
     try {
         const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
-{"category":"トップス または アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（ジャケット・コート・ブルゾン・ダウン・カーディガンなど羽織るものは「アウター」、バッグ・ベルト・アクセサリー・眼鏡・サングラス・時計・マフラー・手袋などは「小物」）","subCategory":"カテゴリに合った種類（例：Tシャツ、コート、デニム、スニーカー、バッグ、眼鏡）","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
+{"category":"トップス または アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（ジャケット・コート・ブルゾン・ダウン・カーディガンなど羽織るものは「アウター」、バッグ・ベルト・ネクタイ・アクセサリー・眼鏡・サングラス・時計・マフラー・手袋などは「小物」）","subCategory":"カテゴリに合った種類（例：Tシャツ、コート、デニム、スニーカー、バッグ、ネクタイ、眼鏡）","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
 
         const result = await callGemini(prompt, currentUploadedImage);
         if (result) {
@@ -1787,7 +1904,8 @@ window.openEditForm = function(existingId = null, presetData = null) {
         styles: Array.isArray(baseItem.styles) ? [...baseItem.styles] : (baseItem.style ? [baseItem.style] : []),
         seasons: Array.isArray(baseItem.seasons) ? [...baseItem.seasons] : (baseItem.season ? [baseItem.season] : []),
         memo: baseItem.memo || "",
-        size: baseItem.size || ""
+        size: baseItem.size || "",
+        gender: baseItem.gender || "男女兼用"
     };
 
     renderEditFormContent();
@@ -1818,6 +1936,10 @@ function renderEditFormContent() {
                 <div class="form-btn-group">${renderSingleBtn('category', Object.keys(CATEGORIES))}</div>
             </div>
             ${subCatHtml}
+
+            <div class="form-group"><label>対象</label>
+                <div class="form-btn-group">${renderSingleBtn('gender', GENDERS)}</div>
+            </div>
 
             <div class="form-group"><label>カラー（複数選択可）</label>
                 <div class="form-btn-group">${renderMultiBtn('colors', COLORS)}</div>
@@ -1858,7 +1980,7 @@ function renderEditFormContent() {
             </div>
 
             <button id="btn-save-item" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
-                ${isNew ? '☁️ クラウドに保存' : '変更を保存'}
+                ${isNew ? (isGuest ? '📱 保存（お試し・端末内）' : '☁️ クラウドに保存') : '変更を保存'}
             </button>
             <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
         </div>
@@ -1908,6 +2030,34 @@ window.toggleFormMulti = function(group, val) {
 };
 
 async function saveItemData(isNew, existingId) {
+    // お試し（ゲスト）モード：セッション内(sessionStorage)に保存。タブを閉じると消える＝他のゲストとかぶらない。画像はそのまま(base64)、クラウド不使用
+    if (isGuest) {
+        currentEditData.memo = document.getElementById('input-memo')?.value || '';
+        currentEditData.size = document.getElementById('input-size')?.value || '';
+        if (isNew && closetItems.length >= GUEST_MAX_ITEMS) {
+            alert(`お試しモードは${GUEST_MAX_ITEMS}点まで登録できます。もっと登録・クラウド保存するにはログインしてください。`);
+            return;
+        }
+        if (!guestSaveConfirm()) return;
+        const fields = {
+            image: currentEditData.image,
+            category: currentEditData.category, subCategory: currentEditData.subCategory,
+            colors: currentEditData.colors, lightness: currentEditData.lightness,
+            styles: currentEditData.styles, seasons: currentEditData.seasons,
+            memo: currentEditData.memo, size: currentEditData.size, gender: currentEditData.gender
+        };
+        if (isNew) {
+            closetItems.unshift({ id: 'g' + Date.now(), createdAt: Date.now(), ...fields });
+            nativeCameraInput.value = '';
+        } else {
+            const target = closetItems.find(i => i.id === existingId);
+            if (target) Object.assign(target, fields);
+        }
+        saveGuestCloset();
+        closeModal();
+        navigate('closet');
+        return;
+    }
     if (!currentUser) return;
     const btnSave = document.getElementById('btn-save-item');
     if (!btnSave) return;
@@ -1936,7 +2086,8 @@ async function saveItemData(isNew, existingId) {
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
                 memo: currentEditData.memo,
-                size: currentEditData.size
+                size: currentEditData.size,
+                gender: currentEditData.gender
             };
             const docRef = await addDoc(collection(db, "closetItems"), docData);
             closetItems.unshift({ id: docRef.id, ...docData });
@@ -1950,7 +2101,8 @@ async function saveItemData(isNew, existingId) {
                 styles: currentEditData.styles,
                 seasons: currentEditData.seasons,
                 memo: currentEditData.memo,
-                size: currentEditData.size
+                size: currentEditData.size,
+                gender: currentEditData.gender
             };
             await updateDoc(doc(db, "closetItems", existingId), updateData);
             const target = closetItems.find(i => i.id === existingId);
@@ -1989,7 +2141,7 @@ window.openCoordPicker = function(slot) {
                 ? '<p style="color:var(--text-secondary); text-align:center; padding:20px;">該当する服がありません。<br>クローゼットに追加してください。</p>'
                 : `<div class="closet-grid">${items.map(item => `<div class="closet-item" onclick="selectForCoord('${item.id}')"><img src="${item.image}" alt="clothing"></div>`).join('')}</div>`
             }
-            <button onclick="closeModal()" class="btn-outline text-center mt-4">キャンセル</button>
+            <button onclick="openCoordRoomModal()" class="btn-outline text-center mt-4">戻る</button>
         </div>
     `;
     modalContainer.classList.remove('hidden');
@@ -2077,11 +2229,8 @@ function renderCoordRoom() {
 }
 
 function refreshCoordRoom() {
-    const room = document.getElementById('coord-room');
-    if (room) {
-        room.innerHTML = `<p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">手持ちの服を組み合わせてAIの評価を聞いてみよう！</p>` + renderCoordRoom();
-        lucide.createIcons();
-    }
+    // コーデ検証ルームはモーダル表示なので、モーダルごと再描画して状態を反映
+    if (document.getElementById('coord-room')) openCoordRoomModal();
 }
 
 window.setCoordType = function(type) {
@@ -2102,8 +2251,7 @@ window.selectForCoord = function(id) {
     else if (currentTargetSlot === '靴') coordState.shoes = item;
     else if (currentTargetSlot === '帽子') coordState.hat = item;
     else if (currentTargetSlot === '小物') coordState.accessory = item;
-    closeModal();
-    refreshCoordRoom();
+    refreshCoordRoom(); // ピッカー → コーデ検証ルームのモーダルに戻す（選択を反映）
 };
 
 window.clearCoord = function(slotKey) {
@@ -2252,10 +2400,11 @@ window.toggleHistorySort = function() {
     navigate('history');
 };
 
-// 予定（ユーザー自身が入力）：端末内（localStorage）にユーザー別・日付別で保存
+// 予定（ユーザー自身が入力）：ログイン=localStorage / ゲスト=sessionStorage に、ユーザー別・日付別で保存
 function getSchedule(iso) {
-    if (!currentUser) return '';
-    return localStorage.getItem(`schedule_${currentUser.uid}_${iso}`) || '';
+    const key = userKey();
+    if (!key) return '';
+    return userStore().getItem(`schedule_${key}_${iso}`) || '';
 }
 // 1週間分の自前予定を calendarEvents に反映（ホームのコーデ提案・予定バッジに使う）
 function loadSchedulesIntoEvents() {
@@ -2267,9 +2416,11 @@ function loadSchedulesIntoEvents() {
 }
 window.saveSchedule = function(iso) {
     const val = (document.getElementById('day-schedule-input')?.value || '').trim();
-    if (currentUser) {
-        if (val) localStorage.setItem(`schedule_${currentUser.uid}_${iso}`, val);
-        else localStorage.removeItem(`schedule_${currentUser.uid}_${iso}`);
+    if (val && !guestSaveConfirm()) return;
+    const key = userKey();
+    if (key) {
+        if (val) userStore().setItem(`schedule_${key}_${iso}`, val);
+        else userStore().removeItem(`schedule_${key}_${iso}`);
     }
     loadSchedulesIntoEvents();
     if (isDataLoaded && (closetItems.length || wearHistory.length)) generateWeeklyOutfitsFromCloset();
@@ -2478,6 +2629,16 @@ window.saveHistoryEdit = async function(id) {
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
     const isoDate = dateInput;
 
+    if (isGuest) {
+        if (!guestSaveConfirm()) return;
+        const gidx = wearHistory.findIndex(h => h.id === id);
+        if (gidx !== -1) Object.assign(wearHistory[gidx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+        saveGuestHistory();
+        closeModal();
+        navigate('history');
+        return;
+    }
     try {
         await updateDoc(doc(db, "history", id), { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
         const idx = wearHistory.findIndex(h => h.id === id);
@@ -2496,6 +2657,12 @@ window.saveHistoryEdit = async function(id) {
 // =============================================
 window.deleteHistoryItem = async function(id) {
     if (!confirm('この着用履歴を削除しますか？\nこの操作は取り消せません。')) return;
+    if (isGuest) {
+        wearHistory = wearHistory.filter(h => h.id !== id);
+        saveGuestHistory();
+        navigate('history');
+        return;
+    }
     try {
         await deleteDoc(doc(db, "history", id));
         wearHistory = wearHistory.filter(h => h.id !== id);

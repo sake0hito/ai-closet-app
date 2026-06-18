@@ -10,7 +10,7 @@
   "theme_color": "#0ea5e9",
   "icons": [
     {
-      "src": "ai-closet-icon-512.png",
+      "src": "https://sake0hito.github.io/ai-closet-app/ai-closet-icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
