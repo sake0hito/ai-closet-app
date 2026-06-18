@@ -496,12 +496,19 @@ async function fetchWeather() {
         );
         const data = await response.json();
 
+        // WMO天気コード → 表示。80-82は「雨（しゅう雨）」、95-99は「雷雨」。雪は71-77/85-86のみ。
+        // （以前は code>=71 をすべて「雪」にしていたため、夏のしゅう雨・雷雨が「雪」と出る季節外れバグがあった）
         const parseWeather = (code) => {
+            if (code == null || isNaN(code)) return { c: "—", i: "cloud" };
             if (code === 0) return { c: "快晴", i: "sun" };
-            if (code >= 1 && code <= 3) return { c: "曇り", i: "cloud" };
-            if (code >= 45 && code <= 48) return { c: "霧", i: "cloud-fog" };
-            if (code >= 51 && code <= 67) return { c: "雨", i: "cloud-rain" };
-            if (code >= 71) return { c: "雪", i: "snowflake" };
+            if (code <= 3)  return { c: "曇り",   i: "cloud" };          // 1-3
+            if (code <= 48) return { c: "霧",     i: "cloud-fog" };      // 45,48
+            if (code <= 57) return { c: "霧雨",   i: "cloud-drizzle" };  // 51-57
+            if (code <= 67) return { c: "雨",     i: "cloud-rain" };     // 61-67
+            if (code <= 77) return { c: "雪",     i: "snowflake" };      // 71-77（降雪）
+            if (code <= 82) return { c: "雨",     i: "cloud-rain" };     // 80-82（しゅう雨）
+            if (code <= 86) return { c: "雪",     i: "snowflake" };      // 85-86（雪しゅう雨）
+            if (code <= 99) return { c: "雷雨",   i: "cloud-lightning" };// 95-99（雷雨）
             return { c: "晴れ", i: "sun" };
         };
 
@@ -509,11 +516,20 @@ async function fetchWeather() {
             weeklyOutfits.forEach((outfit, index) => {
                 if (index < data.daily.time.length) {
                     const w = parseWeather(data.daily.weathercode[index]);
-                    outfit.temp = `${Math.round(data.daily.temperature_2m_max[index])}°C`;
+                    const tmax = data.daily.temperature_2m_max[index];
+                    outfit.temp = (tmax == null || isNaN(tmax)) ? '--°C' : `${Math.round(tmax)}°C`;
                     outfit.condition = w.c;
                     outfit.icon = w.i;
                 }
             });
+            // 今日（index 0）は「現在の天気」で上書き＝ホームの“いま”の気温・天気を正確に表示
+            if (data.current_weather && weeklyOutfits[0]) {
+                const cw = parseWeather(data.current_weather.weathercode);
+                const ct = data.current_weather.temperature;
+                if (ct != null && !isNaN(ct)) weeklyOutfits[0].temp = `${Math.round(ct)}°C`;
+                weeklyOutfits[0].condition = cw.c;
+                weeklyOutfits[0].icon = cw.i;
+            }
             updateWeeklyReasons();
         }
     } catch (e) { console.error("天気API エラー:", e); }
@@ -555,8 +571,10 @@ function initStyleChart() {
         styleChartInstance = null;
     }
 
-    const labels = Object.keys(styleCounts);
-    const dataVals = labels.map(l => styleCounts[l]);
+    // 多い順（降順）に並べてからグラフ化する
+    const sorted = Object.entries(styleCounts).sort((a, b) => b[1] - a[1]);
+    const labels = sorted.map(e => e[0]);
+    const dataVals = sorted.map(e => e[1]);
 
     styleChartInstance = new Chart(canvas, {
         type: 'doughnut',
@@ -606,7 +624,7 @@ window.setOuterRule = function(key, value) {
 // 寒い日・雨雪の日にアウターが必要か判定
 function needsOuter(outfit, rules) {
     const cond = outfit.condition || '';
-    if (rules.outerRain && (cond === '雨' || cond === '雪')) return true;
+    if (rules.outerRain && (cond.includes('雨') || cond === '雪')) return true;
     const temp = parseInt(outfit.temp);
     if (rules.outerCold && outfit.temp !== '--°C' && !isNaN(temp) && temp <= rules.outerTemp) return true;
     return false;
@@ -727,7 +745,7 @@ function generateWeeklyOutfitsFromCloset() {
             if (o) {
                 outfit.outerImage = o.image;
                 outfit.outerName  = o.subCategory || 'アウター';
-                const why = (outfit.condition === '雨' || outfit.condition === '雪') ? '雨で冷えるので' : '冷えるので';
+                const why = ((outfit.condition || '').includes('雨') || outfit.condition === '雪') ? '雨で冷えるので' : '冷えるので';
                 outfit.reason += ` ${why}「${outfit.outerName}」も羽織って。`;
             }
         }
@@ -2251,7 +2269,7 @@ window.selectForCoord = function(id) {
     else if (currentTargetSlot === '靴') coordState.shoes = item;
     else if (currentTargetSlot === '帽子') coordState.hat = item;
     else if (currentTargetSlot === '小物') coordState.accessory = item;
-    refreshCoordRoom(); // ピッカー → コーデ検証ルームのモーダルに戻す（選択を反映）
+    openCoordRoomModal(); // 選択したらピッカー（タブ）を閉じ、検証ルームに戻して選択を反映
 };
 
 window.clearCoord = function(slotKey) {
