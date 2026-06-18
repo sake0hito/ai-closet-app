@@ -549,30 +549,41 @@ setInterval(() => {
 // =============================================
 // スタイル円グラフ（Chart.js）
 // =============================================
+// 傾向分析の「切り口」。1つのボタン→メニューから選んで並び替える（多い順／少ない順）。
+const CHART_DIMS = {
+    styles:   { label: 'スタイル', get: i => i.styles },
+    colors:   { label: '色',       get: i => i.colors },
+    category: { label: 'カテゴリ',  get: i => (i.category ? [i.category] : []) },
+    seasons:  { label: '季節',     get: i => i.seasons },
+    gender:   { label: '対象',     get: i => (i.gender ? [i.gender] : []) },
+};
+let chartDimension = 'styles';
+let chartOrder = 'desc'; // 'desc'=多い順 / 'asc'=少ない順
+
+function countByDimension(dim) {
+    const cfg = CHART_DIMS[dim] || CHART_DIMS.styles;
+    const counts = {};
+    closetItems.forEach(item => {
+        (cfg.get(item) || []).forEach(v => { if (v) counts[v] = (counts[v] || 0) + 1; });
+    });
+    return counts;
+}
+
 function initStyleChart() {
     const canvas = document.getElementById('style-chart');
     if (!canvas) return;
 
-    const styleCounts = {};
-    closetItems.forEach(item => {
-        (item.styles || []).forEach(s => {
-            styleCounts[s] = (styleCounts[s] || 0) + 1;
-        });
-    });
+    if (styleChartInstance) { styleChartInstance.destroy(); styleChartInstance = null; }
 
-    if (Object.keys(styleCounts).length === 0) {
-        canvas.closest('.card')?.remove();
-        return;
-    }
+    const counts = countByDimension(chartDimension);
+    const empty = Object.keys(counts).length === 0;
+    const msgEl = document.getElementById('chart-empty-msg');
+    if (msgEl) msgEl.style.display = empty ? 'block' : 'none';
+    canvas.style.display = empty ? 'none' : 'block';
+    if (empty) return;
 
-    // 既存チャートを破棄
-    if (styleChartInstance) {
-        styleChartInstance.destroy();
-        styleChartInstance = null;
-    }
-
-    // 多い順（降順）に並べてからグラフ化する
-    const sorted = Object.entries(styleCounts).sort((a, b) => b[1] - a[1]);
+    // 選択した並び順に並べてからグラフ化する（多い順＝降順／少ない順＝昇順）
+    const sorted = Object.entries(counts).sort((a, b) => chartOrder === 'asc' ? a[1] - b[1] : b[1] - a[1]);
     const labels = sorted.map(e => e[0]);
     const dataVals = sorted.map(e => e[1]);
 
@@ -582,7 +593,7 @@ function initStyleChart() {
             labels,
             datasets: [{
                 data: dataVals,
-                backgroundColor: CHART_COLORS.slice(0, labels.length),
+                backgroundColor: labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
                 borderWidth: 2,
                 borderColor: 'rgba(255,255,255,0.6)'
             }]
@@ -599,6 +610,36 @@ function initStyleChart() {
         }
     });
 }
+
+// 並び替えボタンのラベルを「切り口・並び順」に更新
+function updateChartSortBtn() {
+    const b = document.getElementById('chart-sort-btn');
+    if (b) b.innerHTML = `📊 ${CHART_DIMS[chartDimension].label}・${chartOrder === 'asc' ? '少ない順' : '多い順'} <span style="font-size:0.7rem;">▾</span>`;
+}
+// 並び替えメニュー（タブ）の開閉
+window.toggleChartMenu = function() {
+    const m = document.getElementById('chart-menu');
+    if (m) m.style.display = (!m.style.display || m.style.display === 'none') ? 'block' : 'none';
+};
+function closeChartMenu() {
+    const m = document.getElementById('chart-menu');
+    if (m) m.style.display = 'none';
+}
+// 切り口を選んだとき：並び替えてメニュー（タブ）を閉じる
+window.setChartDimension = function(dim) {
+    if (!CHART_DIMS[dim]) return;
+    chartDimension = dim;
+    closeChartMenu();
+    updateChartSortBtn();
+    initStyleChart();
+};
+// 並び順（多い順／少ない順）を選んだとき：並び替えてメニュー（タブ）を閉じる
+window.setChartOrder = function(order) {
+    chartOrder = (order === 'asc') ? 'asc' : 'desc';
+    closeChartMenu();
+    updateChartSortBtn();
+    initStyleChart();
+};
 
 // =============================================
 // 週間コーデ生成（所持服優先・前日被り防止・履歴反映）
@@ -1250,22 +1291,32 @@ const routes = {
             const filtered = getFilteredItems();
             let html = '';
 
-            // スタイル円グラフ（服が1点以上あるとき表示）
+            // ファッション傾向分析（1つのボタン→メニューで切り口と並び順を選ぶ。選ぶと並び替えてタブを閉じる）
             if (closetItems.length > 0) {
-                const styleCounts = {};
-                closetItems.forEach(item => {
-                    (item.styles || []).forEach(s => { styleCounts[s] = (styleCounts[s] || 0) + 1; });
-                });
-                if (Object.keys(styleCounts).length > 0) {
-                    html += `
-                    <div class="card" style="margin-bottom:16px;">
-                        <h3 class="section-title">📊 ファッション傾向分析</h3>
-                        <div class="chart-container">
-                            <canvas id="style-chart"></canvas>
+                const menuItem = (onclick, label) =>
+                    `<button onclick="${onclick}" style="display:block; width:100%; text-align:left; background:none; border:none; padding:8px 10px; font-size:0.85rem; cursor:pointer; color:var(--text-primary); border-radius:6px;">${label}</button>`;
+                const dimItems = Object.entries(CHART_DIMS).map(([key, cfg]) => menuItem(`setChartDimension('${key}')`, cfg.label)).join('');
+                const sortLabel = `📊 ${CHART_DIMS[chartDimension].label}・${chartOrder === 'asc' ? '少ない順' : '多い順'} <span style="font-size:0.7rem;">▾</span>`;
+                html += `
+                <div class="card" style="margin-bottom:16px;">
+                    <h3 class="section-title">📊 ファッション傾向分析</h3>
+                    <div style="position:relative; display:inline-block; margin-bottom:12px;">
+                        <button id="chart-sort-btn" onclick="toggleChartMenu()" style="border:1px solid var(--primary-color); border-radius:16px; padding:6px 14px; font-size:0.8rem; cursor:pointer; background:transparent; color:var(--primary-color);">${sortLabel}</button>
+                        <div id="chart-menu" class="card" style="display:none; position:absolute; left:50%; transform:translateX(-50%); top:100%; margin-top:4px; z-index:50; min-width:190px; padding:8px; text-align:left;">
+                            <div style="font-size:0.68rem; color:var(--text-secondary); padding:2px 10px 4px;">並び順</div>
+                            ${menuItem("setChartOrder('desc')", '多い順（多い→少ない）')}
+                            ${menuItem("setChartOrder('asc')", '少ない順（少ない→多い）')}
+                            <div style="height:1px; background:var(--text-secondary); opacity:0.15; margin:6px 4px;"></div>
+                            <div style="font-size:0.68rem; color:var(--text-secondary); padding:2px 10px 4px;">切り口</div>
+                            ${dimItems}
                         </div>
-                        <p style="font-size:0.75rem; color:var(--text-secondary); text-align:center; margin-top:8px;">登録中の服 ${closetItems.length}点から分析</p>
-                    </div>`;
-                }
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="style-chart"></canvas>
+                        <p id="chart-empty-msg" style="display:none; text-align:center; color:var(--text-secondary); font-size:0.85rem; padding:20px;">この切り口のデータがまだありません。</p>
+                    </div>
+                    <p style="font-size:0.75rem; color:var(--text-secondary); text-align:center; margin-top:8px;">登録中の服 ${closetItems.length}点を集計</p>
+                </div>`;
             }
 
             const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
