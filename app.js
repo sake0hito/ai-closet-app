@@ -592,7 +592,7 @@ function initStyleChart() {
     const isColorDim = (chartDimension === 'colors');
     const bgColors = labels.map((l, i) => isColorDim ? (COLOR_HEX[l] || CHART_COLORS[i % CHART_COLORS.length]) : CHART_COLORS[i % CHART_COLORS.length]);
     const lightColors = ['#ffffff', '#e7d8b8', '#eab308'];
-    const borderColors = bgColors.map(c => lightColors.includes(c) ? '#9ca3af' : 'rgba(255,255,255,0.85)');
+    const borderColors = bgColors.map(c => lightColors.includes(c) ? '#111827' : 'rgba(255,255,255,0.85)');
 
     styleChartInstance = new Chart(canvas, {
         type: 'doughnut',
