@@ -132,6 +132,7 @@ let currentEditData = {};
 let styleChartInstance = null;
 let historyView = localStorage.getItem('history_view') || 'list'; // 'list' | 'calendar'
 let historySortOrder = localStorage.getItem('history_sort') || 'newest'; // 'newest' | 'oldest'
+let closetSort = localStorage.getItem('closet_sort') || 'newest'; // クローゼット画像の並び順: 'newest' | 'oldest' | 'category'
 let calendarMonth = new Date();
 
 // チャット履歴（ページ内のみ保持）
@@ -549,7 +550,7 @@ setInterval(() => {
 // =============================================
 // スタイル円グラフ（Chart.js）
 // =============================================
-// 傾向分析の「切り口」。1つのボタン→メニューから選んで並び替える（多い順／少ない順）。
+// 傾向分析の「切り口」。1つのボタン→メニューから選ぶ（スタイル/色/カテゴリ/季節/対象）。常に多い順で表示。
 const CHART_DIMS = {
     styles:   { label: 'スタイル', get: i => i.styles },
     colors:   { label: '色',       get: i => i.colors },
@@ -558,7 +559,6 @@ const CHART_DIMS = {
     gender:   { label: '対象',     get: i => (i.gender ? [i.gender] : []) },
 };
 let chartDimension = 'styles';
-let chartOrder = 'desc'; // 'desc'=多い順 / 'asc'=少ない順
 
 function countByDimension(dim) {
     const cfg = CHART_DIMS[dim] || CHART_DIMS.styles;
@@ -582,10 +582,17 @@ function initStyleChart() {
     canvas.style.display = empty ? 'none' : 'block';
     if (empty) return;
 
-    // 選択した並び順に並べてからグラフ化する（多い順＝降順／少ない順＝昇順）
-    const sorted = Object.entries(counts).sort((a, b) => chartOrder === 'asc' ? a[1] - b[1] : b[1] - a[1]);
+    // 常に多い順（降順）で表示する
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const labels = sorted.map(e => e[0]);
     const dataVals = sorted.map(e => e[1]);
+
+    // 「色」切り口のときは実際の色で塗る。白・ベージュ・黄など淡い色は淵を濃くして見やすくする。
+    const COLOR_HEX = { '赤':'#ef4444','青':'#3b82f6','黄':'#eab308','緑':'#22c55e','むらさき':'#8b5cf6','ピンク':'#ec4899','オレンジ':'#f97316','ベージュ':'#e7d8b8','グレー':'#9ca3af','黒':'#111827','白':'#ffffff' };
+    const isColorDim = (chartDimension === 'colors');
+    const bgColors = labels.map((l, i) => isColorDim ? (COLOR_HEX[l] || CHART_COLORS[i % CHART_COLORS.length]) : CHART_COLORS[i % CHART_COLORS.length]);
+    const lightColors = ['#ffffff', '#e7d8b8', '#eab308'];
+    const borderColors = bgColors.map(c => lightColors.includes(c) ? '#9ca3af' : 'rgba(255,255,255,0.85)');
 
     styleChartInstance = new Chart(canvas, {
         type: 'doughnut',
@@ -593,9 +600,9 @@ function initStyleChart() {
             labels,
             datasets: [{
                 data: dataVals,
-                backgroundColor: labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+                backgroundColor: bgColors,
                 borderWidth: 2,
-                borderColor: 'rgba(255,255,255,0.6)'
+                borderColor: borderColors
             }]
         },
         options: {
@@ -611,10 +618,10 @@ function initStyleChart() {
     });
 }
 
-// 並び替えボタンのラベルを「切り口・並び順」に更新
+// 切り口ボタンのラベルを現在の切り口に更新
 function updateChartSortBtn() {
     const b = document.getElementById('chart-sort-btn');
-    if (b) b.innerHTML = `📊 ${CHART_DIMS[chartDimension].label}・${chartOrder === 'asc' ? '少ない順' : '多い順'} <span style="font-size:0.7rem;">▾</span>`;
+    if (b) b.innerHTML = `📊 ${CHART_DIMS[chartDimension].label} <span style="font-size:0.7rem;">▾</span>`;
 }
 // 並び替えメニュー（タブ）の開閉
 window.toggleChartMenu = function() {
@@ -625,17 +632,10 @@ function closeChartMenu() {
     const m = document.getElementById('chart-menu');
     if (m) m.style.display = 'none';
 }
-// 切り口を選んだとき：並び替えてメニュー（タブ）を閉じる
+// 切り口を選んだとき：グラフを切り替えてメニュー（タブ）を閉じる
 window.setChartDimension = function(dim) {
     if (!CHART_DIMS[dim]) return;
     chartDimension = dim;
-    closeChartMenu();
-    updateChartSortBtn();
-    initStyleChart();
-};
-// 並び順（多い順／少ない順）を選んだとき：並び替えてメニュー（タブ）を閉じる
-window.setChartOrder = function(order) {
-    chartOrder = (order === 'asc') ? 'asc' : 'desc';
     closeChartMenu();
     updateChartSortBtn();
     initStyleChart();
@@ -1291,23 +1291,19 @@ const routes = {
             const filtered = getFilteredItems();
             let html = '';
 
-            // ファッション傾向分析（1つのボタン→メニューで切り口と並び順を選ぶ。選ぶと並び替えてタブを閉じる）
+            // ファッション傾向分析（1つのボタン→メニューで切り口を選ぶ。選ぶと切り替えてタブを閉じる。常に多い順）
             if (closetItems.length > 0) {
                 const menuItem = (onclick, label) =>
                     `<button onclick="${onclick}" style="display:block; width:100%; text-align:left; background:none; border:none; padding:8px 10px; font-size:0.85rem; cursor:pointer; color:var(--text-primary); border-radius:6px;">${label}</button>`;
                 const dimItems = Object.entries(CHART_DIMS).map(([key, cfg]) => menuItem(`setChartDimension('${key}')`, cfg.label)).join('');
-                const sortLabel = `📊 ${CHART_DIMS[chartDimension].label}・${chartOrder === 'asc' ? '少ない順' : '多い順'} <span style="font-size:0.7rem;">▾</span>`;
+                const sortLabel = `📊 ${CHART_DIMS[chartDimension].label} <span style="font-size:0.7rem;">▾</span>`;
                 html += `
                 <div class="card" style="margin-bottom:16px;">
                     <h3 class="section-title">📊 ファッション傾向分析</h3>
                     <div style="position:relative; display:inline-block; margin-bottom:12px;">
                         <button id="chart-sort-btn" onclick="toggleChartMenu()" style="border:1px solid var(--primary-color); border-radius:16px; padding:6px 14px; font-size:0.8rem; cursor:pointer; background:transparent; color:var(--primary-color);">${sortLabel}</button>
-                        <div id="chart-menu" class="card" style="display:none; position:absolute; left:50%; transform:translateX(-50%); top:100%; margin-top:4px; z-index:50; min-width:190px; padding:8px; text-align:left;">
-                            <div style="font-size:0.68rem; color:var(--text-secondary); padding:2px 10px 4px;">並び順</div>
-                            ${menuItem("setChartOrder('desc')", '多い順（多い→少ない）')}
-                            ${menuItem("setChartOrder('asc')", '少ない順（少ない→多い）')}
-                            <div style="height:1px; background:var(--text-secondary); opacity:0.15; margin:6px 4px;"></div>
-                            <div style="font-size:0.68rem; color:var(--text-secondary); padding:2px 10px 4px;">切り口</div>
+                        <div id="chart-menu" class="card" style="display:none; position:absolute; left:50%; transform:translateX(-50%); top:100%; margin-top:4px; z-index:50; min-width:170px; padding:8px; text-align:left;">
+                            <div style="font-size:0.68rem; color:var(--text-secondary); padding:2px 10px 4px;">表示の切り口</div>
                             ${dimItems}
                         </div>
                     </div>
@@ -1322,6 +1318,15 @@ const routes = {
             const filterCount = Object.values(activeFilters).reduce((acc, arr) => acc + arr.length, 0);
             if (filterCount > 0) {
                 html += `<p style="font-size:0.8rem; color:var(--primary-color); margin-bottom:12px; font-weight:bold;">${filterCount}つのフィルター適用中</p>`;
+            }
+
+            // 保存した画像の表示順を変更（新しい順／古い順／カテゴリ順）
+            if (closetItems.length > 0) {
+                const sortOpts = [['newest', '新しい順'], ['oldest', '古い順'], ['category', 'カテゴリ順']];
+                const sortBtns = sortOpts.map(([key, label]) =>
+                    `<button onclick="setClosetSort('${key}')" style="border:1px solid var(--primary-color); border-radius:14px; padding:4px 12px; font-size:0.72rem; cursor:pointer; background:${closetSort === key ? 'var(--primary-color)' : 'transparent'}; color:${closetSort === key ? '#fff' : 'var(--primary-color)'};">${label}</button>`
+                ).join('');
+                html += `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:12px;"><span style="font-size:0.72rem; color:var(--text-secondary);">並び替え:</span>${sortBtns}</div>`;
             }
 
             if (filtered.length === 0) {
@@ -1855,14 +1860,40 @@ window.clearFilters = function() {
 };
 
 function getFilteredItems() {
-    return closetItems.filter(item => {
+    const filtered = closetItems.filter(item => {
         if (activeFilters.category.length > 0 && !activeFilters.category.includes(item.category)) return false;
         if (activeFilters.colors.length > 0 && !activeFilters.colors.some(c => (item.colors || []).includes(c))) return false;
         if (activeFilters.styles.length > 0 && !activeFilters.styles.some(s => (item.styles || []).includes(s))) return false;
         if (activeFilters.seasons.length > 0 && !activeFilters.seasons.some(s => (item.seasons || []).includes(s))) return false;
         return true;
     });
+    return sortClosetItems(filtered);
 }
+
+// クローゼット画像の並び順を適用（新しい順／古い順／カテゴリ順）
+function sortClosetItems(items) {
+    const arr = items.slice();
+    if (closetSort === 'oldest') {
+        arr.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    } else if (closetSort === 'category') {
+        const order = Object.keys(CATEGORIES); // CATEGORIES定義順をカテゴリの並び優先度に使う
+        arr.sort((a, b) => {
+            const ia = order.indexOf(a.category), ib = order.indexOf(b.category);
+            const ca = ia < 0 ? 999 : ia, cb = ib < 0 ? 999 : ib;
+            if (ca !== cb) return ca - cb;
+            return (b.createdAt || 0) - (a.createdAt || 0); // 同カテゴリ内は新しい順
+        });
+    } else {
+        arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); // newest（既定）
+    }
+    return arr;
+}
+
+window.setClosetSort = function(order) {
+    closetSort = ['newest', 'oldest', 'category'].includes(order) ? order : 'newest';
+    try { localStorage.setItem('closet_sort', closetSort); } catch(e) {}
+    navigate('closet');
+};
 
 // =============================================
 // 衣類追加フロー
