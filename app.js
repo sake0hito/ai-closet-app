@@ -591,8 +591,7 @@ function initStyleChart() {
     const COLOR_HEX = { '赤':'#ef4444','青':'#3b82f6','黄':'#eab308','緑':'#22c55e','むらさき':'#8b5cf6','ピンク':'#ec4899','オレンジ':'#f97316','ベージュ':'#e7d8b8','グレー':'#9ca3af','黒':'#111827','白':'#ffffff' };
     const isColorDim = (chartDimension === 'colors');
     const bgColors = labels.map((l, i) => isColorDim ? (COLOR_HEX[l] || CHART_COLORS[i % CHART_COLORS.length]) : CHART_COLORS[i % CHART_COLORS.length]);
-    const lightColors = ['#ffffff', '#e7d8b8', '#eab308'];
-    const borderColors = bgColors.map(c => lightColors.includes(c) ? '#111827' : 'rgba(255,255,255,0.85)');
+    const borderColors = bgColors.map(() => '#111827'); // 全セグメントの淵を黒にして見やすく
 
     styleChartInstance = new Chart(canvas, {
         type: 'doughnut',
