@@ -1308,6 +1308,13 @@ const routes = {
                     <i data-lucide="${icon}" style="width:28px; height:28px; color:${color};"></i>
                     <p style="font-weight:700; margin-top:8px; font-size:0.88rem;">${label}</p>
                 </div>`;
+            // 準備中の機能：アクセス不可（クリックできない）＋「Coming Soon」表示。実現したらtile()に置き換える。
+            const comingSoonTile = (icon, label) =>
+                `<div class="card" style="margin-bottom:0; text-align:center; padding:18px 10px; opacity:0.55; cursor:not-allowed; position:relative;" aria-disabled="true">
+                    <span style="position:absolute; top:6px; right:6px; background:var(--text-secondary); color:#fff; font-size:0.58rem; padding:2px 6px; border-radius:8px; letter-spacing:0.02em;">Coming Soon</span>
+                    <i data-lucide="${icon}" style="width:28px; height:28px; color:var(--text-secondary);"></i>
+                    <p style="font-weight:700; margin-top:8px; font-size:0.88rem; color:var(--text-secondary);">${label}</p>
+                </div>`;
             html += `
             <h3 class="section-title mt-4">メニュー</h3>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
@@ -1316,6 +1323,7 @@ const routes = {
                 ${tile("openChatModal()",      "message-circle", "AIスタイリスト相談",   "var(--primary-color)")}
                 ${tile("showRecommendItems()", "shopping-bag",   "買い足しおすすめ",     "var(--accent-color)")}
                 ${tile("openMapModal()",       "map-pin",        "お店を探す",           "var(--primary-color)")}
+                ${comingSoonTile("user",       "マネキン試着")}
             </div>
             `;
 
