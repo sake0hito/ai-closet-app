@@ -671,7 +671,18 @@ function needsOuter(outfit, rules) {
 }
 
 function generateWeeklyOutfitsFromCloset() {
-    if (closetItems.length === 0 && wearHistory.length === 0) return;
+    // 服が3着未満のときは提案を生成しない（未登録/少数なのに提案が出て画像が崩れる困惑を防ぐ）。
+    // 天気(temp/condition/icon)は保持し、画像系だけクリアして案内文を出す。
+    if (closetItems.length < 3) {
+        const need = 3 - closetItems.length;
+        weeklyOutfits.forEach(o => {
+            o.image = null; o.topsImage = null; o.bottomsImage = null;
+            o.outerImage = null; o.outerName = null;
+            o.isFromHistory = false; o.tags = [];
+            o.reason = `服を3着以上登録すると、ここにAIコーデが提案されます（あと${need}着）。`;
+        });
+        return;
+    }
 
     // 「トップス・アウター」は旧データ。トップス扱いで後方互換を保つ
     const tops      = closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター');
@@ -1220,12 +1231,20 @@ const routes = {
 
             weeklyOutfits.forEach((outfit, index) => {
                 // トップス＋ボトムスを横並び表示
-                const thumbHtml = (outfit.topsImage && outfit.bottomsImage)
-                    ? `<div style="display:flex; gap:2px; height:200px; overflow:hidden;">
-                           <img src="${outfit.topsImage}" alt="tops" style="flex:1; object-fit:cover; min-width:0;">
-                           <img src="${outfit.bottomsImage}" alt="bottoms" style="flex:1; object-fit:cover; min-width:0;">
-                       </div>`
-                    : `<img src="${outfit.topsImage || outfit.image}" alt="Outfit" class="outfit-image" style="height:200px;" />`;
+                // 画像が読み込めない（削除済み等）ときは崩れアイコンを出さず、灰色のプレースホルダーに差し替える
+                const onErr = "this.onerror=null;this.removeAttribute('src');this.style.background='var(--primary-light)';";
+                let thumbHtml;
+                if (outfit.topsImage && outfit.bottomsImage) {
+                    thumbHtml = `<div style="display:flex; gap:2px; height:200px; overflow:hidden;">
+                           <img src="${outfit.topsImage}" alt="tops" onerror="${onErr}" style="flex:1; object-fit:cover; min-width:0;">
+                           <img src="${outfit.bottomsImage}" alt="bottoms" onerror="${onErr}" style="flex:1; object-fit:cover; min-width:0;">
+                       </div>`;
+                } else if (outfit.topsImage || outfit.image) {
+                    thumbHtml = `<img src="${outfit.topsImage || outfit.image}" alt="Outfit" class="outfit-image" onerror="${onErr}" style="height:200px;" />`;
+                } else {
+                    // 画像なし（服が少ない/初回）→ 崩れた画像ではなく案内プレースホルダー
+                    thumbHtml = `<div class="outfit-image" style="height:200px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; background:var(--primary-light); color:var(--text-secondary); font-size:0.8rem; text-align:center; padding:12px;"><i data-lucide="shirt" style="width:30px; height:30px; opacity:0.6;"></i>服を3着以上登録すると<br>コーデ画像が表示されます</div>`;
+                }
 
                 html += `
                 <div class="carousel-item">
@@ -1638,15 +1657,18 @@ function getHatRecommendation(outfit) {
 window.openOutfitDetails = function(index) {
     const outfit = weeklyOutfits[index];
 
-    // トップス＋ボトムスの横並び表示
+    // トップス＋ボトムスの横並び表示（画像が読み込めない場合は灰色プレースホルダーに差し替え）
+    const onErrD = "this.onerror=null;this.removeAttribute('src');this.style.background='var(--primary-light)';";
     let imageHtml;
     if (outfit.topsImage && outfit.bottomsImage) {
         imageHtml = `<div style="display:flex; gap:3px; height:240px; border-radius:12px; overflow:hidden; margin-bottom:16px;">
-            <img src="${outfit.topsImage}" alt="tops" style="flex:1; object-fit:cover; min-width:0;">
-            <img src="${outfit.bottomsImage}" alt="bottoms" style="flex:1; object-fit:cover; min-width:0;">
+            <img src="${outfit.topsImage}" alt="tops" onerror="${onErrD}" style="flex:1; object-fit:cover; min-width:0;">
+            <img src="${outfit.bottomsImage}" alt="bottoms" onerror="${onErrD}" style="flex:1; object-fit:cover; min-width:0;">
         </div>`;
+    } else if (outfit.topsImage || outfit.image) {
+        imageHtml = `<img src="${outfit.topsImage || outfit.image}" onerror="${onErrD}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">`;
     } else {
-        imageHtml = `<img src="${outfit.topsImage || outfit.image}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="outfit">`;
+        imageHtml = `<div style="width:100%; height:240px; border-radius:12px; margin-bottom:16px; display:flex; align-items:center; justify-content:center; background:var(--primary-light); color:var(--text-secondary); font-size:0.85rem;">服を3着以上登録するとコーデが表示されます</div>`;
     }
 
     // 季節・気温・天候に基づくスマート帽子レコメンド
