@@ -1899,6 +1899,56 @@ window.deleteSelected = async function() {
     }
 };
 
+// 服の画像を簡易3D（テクスチャを貼った板）にしてGLB化し、model-viewerでAR/3D表示する
+window.showItemAR = async function(id) {
+    const item = closetItems.find(i => i.id === id);
+    if (!item || !item.image) return;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content text-center">
+            <h3 class="section-title">📱 ARで見る</h3>
+            <div id="ar-body"><p style="color:var(--text-secondary);"><i data-lucide="loader" class="spinner inline-icon"></i> 3Dデータを準備中...</p></div>
+            <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    try {
+        const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/+esm');
+        const { GLTFExporter } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/exporters/GLTFExporter.js/+esm');
+        const tex = await new Promise((resolve, reject) => {
+            new THREE.TextureLoader().load(item.image, resolve, undefined, reject);
+        });
+        if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+        const im = tex.image;
+        const aspect = (im && im.width && im.height) ? (im.width / im.height) : 1;
+        const w = 0.6, h = w / aspect; // 横幅0.6mの板
+        const mesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, h),
+            new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, transparent: true })
+        );
+        const scene = new THREE.Scene();
+        scene.add(mesh);
+        const glb = await new Promise((resolve, reject) => {
+            new GLTFExporter().parse(scene, resolve, reject, { binary: true });
+        });
+        const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+        const body = document.getElementById('ar-body');
+        if (!body) { URL.revokeObjectURL(url); return; }
+        body.innerHTML = `
+            <model-viewer src="${url}" alt="${item.subCategory || item.category}" camera-controls auto-rotate
+                ar ar-modes="webxr scene-viewer" ar-scale="fixed"
+                style="width:100%; height:320px; background:var(--primary-light); border-radius:12px;">
+                <button slot="ar-button" style="position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:var(--primary-color); color:#fff; border:none; padding:10px 18px; border-radius:20px; font-weight:bold; cursor:pointer;">📱 ARで部屋に置く</button>
+            </model-viewer>
+            <p style="font-size:0.78rem; color:var(--text-secondary); margin-top:8px;">スマホ（Android対応）なら「ARで部屋に置く」で実寸イメージを配置できます。iPhone・PCは3D表示のみ（指で回転）。</p>`;
+    } catch (e) {
+        const body = document.getElementById('ar-body');
+        if (body) body.innerHTML = `<p style="color:var(--text-secondary); font-size:0.85rem;">3Dデータの生成に失敗しました。通信環境を確認して、もう一度お試しください。</p>`;
+        console.warn('AR生成エラー:', e);
+    }
+};
+
 window.openItemDetails = function(id) {
     const item = closetItems.find(i => i.id === id);
     if (!item) return;
@@ -1913,6 +1963,7 @@ window.openItemDetails = function(id) {
             </div>
             ${item.size ? `<p style="font-size:0.9rem; margin-bottom:12px;"><span style="color:var(--text-secondary);">📏 サイズ：</span><strong>${item.size}</strong></p>` : ''}
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
+            <button onclick="showItemAR('${item.id}')" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">📱 ARで見る（試着イメージ）</button>
             <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
             <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
         </div>
