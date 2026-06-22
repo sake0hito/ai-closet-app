@@ -671,7 +671,7 @@ function needsOuter(outfit, rules) {
 }
 
 // 1週間のコーデ予測を出せる条件：
-//  (上半身[トップス or アウター]≥2 かつ ボトムス≥2) または ワンピース≥2 または スーツ≥2
+//  (上半身[トップス or アウター]≥1 かつ ボトムス≥1 ＝合計2着で1コーデ成立) または ワンピース≥2 または スーツ≥2
 function canPredictOutfits() {
     let tops = 0, bottoms = 0, onepiece = 0, suit = 0;
     closetItems.forEach(i => {
@@ -680,7 +680,7 @@ function canPredictOutfits() {
         else if (i.category === 'ワンピース' || i.category === 'ドレス') onepiece++;
         else if (i.category === 'スーツ') suit++;
     });
-    return (tops >= 2 && bottoms >= 2) || onepiece >= 2 || suit >= 2;
+    return (tops >= 1 && bottoms >= 1) || onepiece >= 2 || suit >= 2;
 }
 
 function generateWeeklyOutfitsFromCloset() {
@@ -1295,7 +1295,7 @@ const routes = {
                     クローゼットに服の画像を登録すると、ここに毎日のコーデ予測が表示されます。
                     <div style="margin-top:10px; font-size:0.78rem; text-align:left; background:var(--primary-light); border-radius:8px; padding:10px 12px;">
                         <strong>表示される条件（いずれか）</strong><br>
-                        ・トップス／アウターを合計2着以上 ＋ ボトムス2着以上<br>
+                        ・トップス／アウターを1着以上 ＋ ボトムスを1着以上（合計2着）<br>
                         ・ワンピース2着以上<br>
                         ・スーツ2着以上
                     </div>
