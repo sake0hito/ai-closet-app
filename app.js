@@ -1831,6 +1831,7 @@ window.deleteSelected = async function() {
         if (isGuest) {
             closetItems = closetItems.filter(item => !selectedItems.has(item.id));
             saveGuestCloset();
+            generateWeeklyOutfitsFromCloset(); // 削除後に予測を作り直す
             toggleEditMode();
             navigate('closet');
             return;
@@ -1845,6 +1846,7 @@ window.deleteSelected = async function() {
                 } catch(e) { /* 画像削除失敗は無視 */ }
             }
             closetItems = closetItems.filter(item => !selectedItems.has(item.id));
+            generateWeeklyOutfitsFromCloset(); // 削除後に予測を作り直す
             toggleEditMode();
             navigate('closet');
         } catch(e) {
@@ -2206,6 +2208,7 @@ async function saveItemData(isNew, existingId) {
             if (target) Object.assign(target, fields);
         }
         saveGuestCloset();
+        generateWeeklyOutfitsFromCloset(); // 追加後に予測を作り直す
         closeModal();
         navigate('closet');
         return;
@@ -2260,6 +2263,7 @@ async function saveItemData(isNew, existingId) {
             const target = closetItems.find(i => i.id === existingId);
             if (target) Object.assign(target, updateData);
         }
+        generateWeeklyOutfitsFromCloset(); // 追加・編集後に予測を作り直す
         closeModal();
         navigate('closet');
     } catch(e) {
