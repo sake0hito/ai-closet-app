@@ -670,24 +670,35 @@ function needsOuter(outfit, rules) {
     return false;
 }
 
+// 1週間のコーデ予測を出せる条件：
+//  (上半身[トップス or アウター]≥2 かつ ボトムス≥2) または ワンピース≥2 または スーツ≥2
+function canPredictOutfits() {
+    let tops = 0, bottoms = 0, onepiece = 0, suit = 0;
+    closetItems.forEach(i => {
+        if (i.category === 'トップス' || i.category === 'トップス・アウター' || i.category === 'アウター') tops++;
+        else if (i.category === 'ボトムス') bottoms++;
+        else if (i.category === 'ワンピース' || i.category === 'ドレス') onepiece++;
+        else if (i.category === 'スーツ') suit++;
+    });
+    return (tops >= 2 && bottoms >= 2) || onepiece >= 2 || suit >= 2;
+}
+
 function generateWeeklyOutfitsFromCloset() {
-    // 服が3着未満のときは提案を生成しない（未登録/少数なのに提案が出て画像が崩れる困惑を防ぐ）。
-    // 天気(temp/condition/icon)は保持し、画像系だけクリアして案内文を出す。
-    if (closetItems.length < 3) {
-        const need = 3 - closetItems.length;
+    // 予測を出せる構成（上下2着ずつ等）でないときは提案を生成しない。画像系をクリアして案内文だけ残す。
+    if (!canPredictOutfits()) {
         weeklyOutfits.forEach(o => {
             o.image = null; o.topsImage = null; o.bottomsImage = null;
             o.outerImage = null; o.outerName = null;
             o.isFromHistory = false; o.tags = [];
-            o.reason = `服を3着以上登録すると、ここにAIコーデが提案されます（あと${need}着）。`;
+            o.reason = 'トップスとボトムスを2着ずつ（またはワンピース/スーツを2着）登録すると、コーデが提案されます。';
         });
         return;
     }
 
-    // 「トップス・アウター」は旧データ。トップス扱いで後方互換を保つ
-    const tops      = closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター');
+    // 「トップス・アウター」は旧データ。トップス扱いで後方互換を保つ。スーツはワンピース同様の「一着で完成」枠に含める
+    const tops      = closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター' || i.category === 'アウター');
     const bottoms   = closetItems.filter(i => i.category === 'ボトムス');
-    const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス');
+    const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス' || i.category === 'スーツ');
     const outers    = closetItems.filter(i => i.category === 'アウター');
     const coordRules = getCoordRules();
 
@@ -768,7 +779,7 @@ function generateWeeklyOutfitsFromCloset() {
                 ...(op.styles  || []).map(s => s.replace('系', '')),
                 ...(op.seasons || [])
             ])].slice(0, 3);
-            outfit.reason = `${weather ? weather + 'に合わせた' : ''}あなたの「${op.subCategory || 'ワンピース'}」コーデです。`;
+            outfit.reason = `${weather ? weather + 'に合わせた' : ''}あなたの「${op.subCategory || op.category || 'ワンピース'}」コーデです。`;
             prevOpId = op.id;
         } else if (topsCandidates.length > 0) {
             const t = topsCandidates[Math.floor(Math.random() * topsCandidates.length)];
@@ -791,7 +802,9 @@ function generateWeeklyOutfitsFromCloset() {
 
         // 提案ルール：寒い日・雨雪の日はアウターをセット提案
         if (needsOuter(outfit, coordRules) && outers.length > 0) {
-            const outerPool = prefer(outers);
+            // 上半身に選んだアウターを重ね着レイヤーに再利用しない
+            let outerPool = prefer(outers).filter(o => o.id !== prevTopsId);
+            if (outerPool.length === 0) outerPool = prefer(outers);
             const o = outerPool[Math.floor(Math.random() * outerPool.length)];
             if (o) {
                 outfit.outerImage = o.image;
@@ -1224,8 +1237,12 @@ const routes = {
                     </div>
                 </div>
             </div>
+            `;
 
-            <h3 class="section-title">1週間のコーデ予測</h3>
+            // 1週間のコーデ予測：(トップス≥2かつボトムス≥2) または ワンピース≥2 または スーツ≥2 のときだけ表示。
+            // 条件を満たさないときはセクションごと出さない（機能は削除せず条件付き非表示）。
+            if (canPredictOutfits()) {
+            html += `<h3 class="section-title">1週間のコーデ予測</h3>
             <div class="carousel-container">
             `;
 
@@ -1242,8 +1259,8 @@ const routes = {
                 } else if (outfit.topsImage || outfit.image) {
                     thumbHtml = `<img src="${outfit.topsImage || outfit.image}" alt="Outfit" class="outfit-image" onerror="${onErr}" style="height:200px;" />`;
                 } else {
-                    // 画像なし（服が少ない/初回）→ 崩れた画像ではなく案内プレースホルダー
-                    thumbHtml = `<div class="outfit-image" style="height:200px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; background:var(--primary-light); color:var(--text-secondary); font-size:0.8rem; text-align:center; padding:12px;"><i data-lucide="shirt" style="width:30px; height:30px; opacity:0.6;"></i>服を3着以上登録すると<br>コーデ画像が表示されます</div>`;
+                    // 画像なし → 崩れた画像ではなく中立のプレースホルダー
+                    thumbHtml = `<div class="outfit-image" style="height:200px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; background:var(--primary-light); color:var(--text-secondary); font-size:0.8rem; text-align:center; padding:12px;"><i data-lucide="shirt" style="width:30px; height:30px; opacity:0.6;"></i>コーデ画像なし</div>`;
                 }
 
                 html += `
@@ -1270,6 +1287,20 @@ const routes = {
             });
 
             html += `</div>`;
+            } else {
+                // 条件未満でも見出し「1週間のコーデ予測」は残し、その下に案内＋表示条件を表示
+                html += `<h3 class="section-title">1週間のコーデ予測</h3>
+                <div class="card" style="text-align:center; padding:20px; margin-bottom:8px; color:var(--text-secondary); font-size:0.85rem; line-height:1.6;">
+                    <i data-lucide="shirt" style="width:28px; height:28px; opacity:0.6; display:block; margin:0 auto 8px;"></i>
+                    クローゼットに服の画像を登録すると、ここに毎日のコーデ予測が表示されます。
+                    <div style="margin-top:10px; font-size:0.78rem; text-align:left; background:var(--primary-light); border-radius:8px; padding:10px 12px;">
+                        <strong>表示される条件（いずれか）</strong><br>
+                        ・トップス／アウターを合計2着以上 ＋ ボトムス2着以上<br>
+                        ・ワンピース2着以上<br>
+                        ・スーツ2着以上
+                    </div>
+                </div>`;
+            }
 
             // メニュー：5機能をコンパクトなタイルに。タップでモーダル表示
             const tile = (onclick, icon, label, color) =>
