@@ -670,6 +670,44 @@ function needsOuter(outfit, rules) {
     return false;
 }
 
+// 予測が出せない初回ユーザー向け：楽天の人気アイテムで「こんなコーデが出ます」サンプルを2つ表示
+async function loadSampleCoords() {
+    const el = document.getElementById('sample-coords');
+    if (!el) return;
+    try {
+        const mo = new Date().getMonth() + 1;
+        const season = (mo >= 3 && mo <= 5) ? '春' : (mo >= 6 && mo <= 8) ? '夏' : (mo >= 9 && mo <= 11) ? '秋' : '冬';
+        const res = await fetch(WORKER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rakutenSearch: { keyword: `${season} コーディネート`, hits: 6, sort: '-reviewCount' } })
+        });
+        const data = await res.json();
+        const items = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+        const cur = document.getElementById('sample-coords');
+        if (!cur) return;
+        if (items.length === 0) { cur.style.display = 'none'; return; }
+        const card = (it) => {
+            const img = (it.mediumImageUrls && it.mediumImageUrls[0] && it.mediumImageUrls[0].imageUrl) ||
+                        (it.smallImageUrls && it.smallImageUrls[0] && it.smallImageUrls[0].imageUrl) || '';
+            return `<a href="${it.itemUrl || '#'}" target="_blank" rel="noopener" class="card" style="margin-bottom:0; overflow:hidden; padding:0; display:block; text-decoration:none; color:inherit;">
+                <div style="position:relative;">
+                    <img src="${img}" onerror="this.onerror=null;this.removeAttribute('src');this.style.background='var(--primary-light)';" style="width:100%; height:150px; object-fit:cover; display:block;" alt="サンプル">
+                    <span style="position:absolute; top:6px; left:6px; background:var(--accent-color); color:#fff; font-size:0.62rem; padding:2px 8px; border-radius:8px;">📌 サンプル</span>
+                </div>
+                <p style="font-size:0.72rem; padding:8px; color:var(--text-secondary); line-height:1.4;">${(it.itemName || '').slice(0, 36)}</p>
+            </a>`;
+        };
+        cur.innerHTML = `
+            <p style="font-size:0.85rem; font-weight:600; margin:4px 0 8px;">📌 こんなコーデが提案されます（サンプル）</p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">${items.map(card).join('')}</div>
+            <p style="font-size:0.73rem; color:var(--text-secondary); margin-top:8px;">※楽天の人気アイテム。服を登録すると、あなたの手持ちで作った提案に変わります。</p>`;
+    } catch (e) {
+        const cur = document.getElementById('sample-coords');
+        if (cur) cur.style.display = 'none'; // 取得失敗時は静かに隠す
+    }
+}
+
 // 1週間のコーデ予測を出せる条件：
 //  (上半身[トップス or アウター]≥1 かつ ボトムス≥1 ＝合計2着で1コーデ成立) または ワンピース≥2 または スーツ≥2
 function canPredictOutfits() {
@@ -1299,6 +1337,9 @@ const routes = {
                         ・ワンピース2着以上<br>
                         ・スーツ2着以上
                     </div>
+                </div>
+                <div id="sample-coords" style="margin-bottom:8px;">
+                    <p style="font-size:0.82rem; color:var(--text-secondary);"><i data-lucide="loader" class="spinner inline-icon"></i> サンプルコーデを読み込み中...</p>
                 </div>`;
             }
 
@@ -1563,6 +1604,8 @@ function navigate(route) {
                 const chatEl = document.getElementById('chat-messages');
                 if (chatEl) renderChatMessages(chatEl);
             }, 100);
+            // 予測が出せない（服が少ない/未登録）時は、楽天の人気アイテムでサンプルコーデを表示
+            if (document.getElementById('sample-coords')) loadSampleCoords();
         }
     }, 150);
 }
