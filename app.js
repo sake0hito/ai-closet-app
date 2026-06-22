@@ -1685,6 +1685,45 @@ function getHatRecommendation(outfit) {
     return { recommend: false };
 }
 
+// コーデ詳細を開いたときに、AIが「着こなしのコツ」を提案する（服に詳しくない人向け）
+async function loadStylingTips(outfit) {
+    const el = document.getElementById('styling-tips');
+    if (!el) return;
+    const findByImg = (img) => img ? closetItems.find(i => i.image === img) : null;
+    const top = findByImg(outfit.topsImage) || findByImg(outfit.image);
+    const bottom = findByImg(outfit.bottomsImage);
+    const desc = (it) => it ? `${it.subCategory || it.category}（色:${(it.colors || []).join('・') || '指定なし'}）` : null;
+    const parts = [];
+    if (desc(top)) parts.push('トップス: ' + desc(top));
+    if (desc(bottom)) parts.push('ボトムス: ' + desc(bottom));
+    if (outfit.outerName) parts.push('アウター: ' + outfit.outerName);
+    const itemsText = parts.join(' / ') || (outfit.tags || []).join('・') || 'このコーデ';
+    const prompt = `あなたは親切なファッションスタイリストです。服にあまり詳しくない人向けに、次のコーデを「カッコよく・おしゃれに着こなすコツ」を3つ、具体的に提案してください。
+コーデ: ${itemsText}
+ルール:
+- シャツのイン/アウト、袖まくり、サイズ感、上下のボリュームバランス、小物使いなど、すぐ真似できる具体的なコツにする。
+- 専門用語を避け、初心者にも分かる言葉で。各コツは40字以内。
+- JSONのみで返す。
+形式: {"tips":["コツ1","コツ2","コツ3"]}`;
+    try {
+        const parsed = JSON.parse(await callGemini(prompt, null, { json: true }));
+        const tips = Array.isArray(parsed.tips) ? parsed.tips.filter(Boolean) : [];
+        const cur = document.getElementById('styling-tips'); // 取得中に閉じられた場合に備えて取り直す
+        if (!cur) return;
+        if (tips.length) {
+            cur.innerHTML = `<p style="font-weight:bold; color:var(--text-primary); margin-bottom:8px; font-size:0.9rem;">💡 着こなしのコツ</p>
+                <ul style="margin:0; padding-left:18px; font-size:0.84rem; color:var(--text-secondary); line-height:1.7;">
+                    ${tips.map(t => `<li>${t}</li>`).join('')}
+                </ul>`;
+        } else {
+            cur.style.display = 'none';
+        }
+    } catch (e) {
+        const cur = document.getElementById('styling-tips');
+        if (cur) cur.innerHTML = `<p style="font-size:0.8rem; color:var(--text-secondary); margin:0;">着こなしのコツを取得できませんでした。AI接続をご確認ください。</p>`;
+    }
+}
+
 window.openOutfitDetails = function(index) {
     const outfit = weeklyOutfits[index];
 
@@ -1780,6 +1819,9 @@ window.openOutfitDetails = function(index) {
             </p>
             ${hatHtml}
             ${accessoryHtml}
+            ${(outfit.topsImage || outfit.image) ? `<div id="styling-tips" style="background:var(--primary-light); border:1px solid rgba(14,165,233,0.2); padding:12px; border-radius:10px; margin-bottom:16px;">
+                <p style="font-size:0.85rem; color:var(--text-secondary); margin:0;"><i data-lucide="loader" class="spinner inline-icon"></i> 着こなしのコツを考え中...</p>
+            </div>` : ''}
             <button onclick="saveToHistory(${index})" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">
                 今日着た！履歴に残す
             </button>
@@ -1788,6 +1830,7 @@ window.openOutfitDetails = function(index) {
     `;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
+    if (outfit.topsImage || outfit.image) loadStylingTips(outfit); // AIで着こなしのコツを取得
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
