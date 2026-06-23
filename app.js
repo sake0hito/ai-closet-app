@@ -1470,6 +1470,14 @@ const routes = {
             if (!isDataLoaded) {
                 return `<p class="text-center" style="margin-top:40px;"><i data-lucide="loader" class="spinner inline-icon"></i> 読み込み中...</p>`;
             }
+            // ゲスト（お試しモード）は着用履歴を利用できない旨を案内
+            if (isGuest) {
+                return `<div class="card" style="text-align:center; padding:28px 20px; color:var(--text-secondary); margin-top:8px;">
+                    <i data-lucide="lock" style="width:32px; height:32px; opacity:0.6; display:block; margin:0 auto 10px;"></i>
+                    <p style="font-weight:bold; color:var(--text-primary); margin:0 0 6px;">お試しモードでは着用履歴はご利用いただけません</p>
+                    <p style="font-size:0.85rem; line-height:1.6; margin:0;">ログイン（登録）すると、着た日を記録してカレンダーで振り返れます。</p>
+                </div>`;
+            }
             let html = isGuest ? '' : `
             <button onclick="openAddHistoryModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px;">
                 <i data-lucide="plus-circle" class="inline-icon"></i> 着用を手動で記録する
