@@ -1256,6 +1256,7 @@ const routes = {
     home: {
         title: "ホーム",
         showFab: false,
+        headerAction: `<button onclick="openGuideModal()" title="使い方ガイド" style="background:none; border:none; color:var(--primary-color); cursor:pointer; display:flex; align-items:center;"><i data-lucide="help-circle" style="width:24px; height:24px;"></i></button>`,
         render: () => {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('ja-JP', {hour: '2-digit', minute:'2-digit'});
@@ -1488,6 +1489,11 @@ const routes = {
         render: () => {
             const rules = getCoordRules();
             return `
+            <div class="card" onclick="openGuideModal()" style="cursor:pointer; display:flex; align-items:center; gap:10px;">
+                <i data-lucide="help-circle" style="width:24px; height:24px; color:var(--primary-color); flex-shrink:0;"></i>
+                <div><p style="font-weight:bold; margin:0;">📖 使い方ガイド</p><p style="font-size:0.78rem; color:var(--text-secondary); margin:2px 0 0;">アプリの使い方をいつでも確認できます</p></div>
+            </div>
+
             <div class="card">
                 <h3 class="section-title">テーマカラー</h3>
                 <div class="theme-selector">
@@ -1606,6 +1612,11 @@ function navigate(route) {
             }, 100);
             // 予測が出せない（服が少ない/未登録）時は、楽天の人気アイテムでサンプルコーデを表示
             if (document.getElementById('sample-coords')) loadSampleCoords();
+            // 初回のみ：使い方ガイドを自動表示（端末に記録して次回以降は出さない）
+            if ((currentUser || isGuest) && localStorage.getItem('guide_seen') !== '1') {
+                localStorage.setItem('guide_seen', '1');
+                setTimeout(() => openGuideModal(), 500);
+            }
         }
     }, 150);
 }
@@ -1948,6 +1959,34 @@ window.deleteSelected = async function() {
             console.error(e);
         }
     }
+};
+
+// 使い方ガイド（初回自動表示＋ホームの「?」・設定からいつでも開ける）
+window.openGuideModal = function() {
+    const step = (icon, title, body) =>
+        `<div style="display:flex; gap:10px; margin-bottom:14px;">
+            <div style="font-size:1.2rem; flex-shrink:0; line-height:1.4;">${icon}</div>
+            <div><p style="font-weight:bold; font-size:0.9rem; margin:0 0 2px;">${title}</p>
+            <p style="font-size:0.82rem; color:var(--text-secondary); line-height:1.5; margin:0;">${body}</p></div>
+        </div>`;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">📖 AI Closet の使い方</h3>
+            ${step('📷', '① 服を登録', '右下の＋ボタンから写真を撮る/選ぶと、AIが色や季節を自動でタグ付け。内容を確認して保存します。')}
+            ${step('👕', '② 1週間のコーデ予測', 'トップス（またはアウター）とボトムスを各1着以上登録すると、ホームに毎日のコーデが表示されます。')}
+            ${step('✨', '③ 着こなしのコツ', 'コーデをタップすると、AIが「シャツはイン」などの着こなしのコツを教えてくれます。')}
+            ${step('🧪', '④ コーデ検証ルーム', '手持ちの服を自分で組み合わせて、AIに評価してもらえます。')}
+            ${step('💬', '⑤ AIスタイリスト相談', 'チャットで服やコーデの相談ができます。')}
+            ${step('🛍', '⑥ トレンド / 買い足し', '今季のトレンドや、買い足すと着回しが広がる服（楽天）を提案します。')}
+            ${step('🗺', '⑦ お店を探す', '近くのお店をGoogleマップで検索できます。')}
+            ${step('📅', '⑧ 着用履歴', '着た日を記録して、カレンダーで振り返れます。')}
+            <div style="background:var(--primary-light); border-radius:8px; padding:10px 12px; font-size:0.8rem; color:var(--text-secondary); margin-bottom:16px;">💡 <strong>お試しモード</strong>：ログインなしで使えます。ただしタブ/ブラウザを閉じるとデータは消えます。ずっと保存したいときはログインしてください。</div>
+            <button onclick="closeModal()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">はじめる</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
 // 服の画像を簡易3D（テクスチャを貼った板）にしてGLB化し、model-viewerでAR/3D表示する
