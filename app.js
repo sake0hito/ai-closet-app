@@ -2151,9 +2151,13 @@ fabAdd.addEventListener('click', () => {
             <h3 class="section-title">衣類または履物を登録</h3>
             <div id="upload-area" class="upload-area">
                 <i data-lucide="camera" style="width: 32px; height: 32px; margin-bottom: 8px;"></i>
-                <p>タップしてカメラ撮影<br><span style="font-size: 0.8rem; opacity: 0.8;">または画像を選択</span></p>
+                <p>タップして1枚ずつ登録<br><span style="font-size: 0.8rem; opacity: 0.8;">カメラ撮影 または 画像を選択</span></p>
                 <p style="font-size:0.75rem; margin-top:8px; opacity:0.7;">✨ AIが服を自動認識します</p>
             </div>
+            <button id="btn-bulk-add" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:12px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                <i data-lucide="layers" class="inline-icon"></i> まとめて登録（複数枚・AIおまかせ）
+            </button>
+            <p style="font-size:0.72rem; color:var(--text-secondary); text-align:center; margin-top:6px;">手持ちの服を一気に登録。タグはAIにおまかせ（あとで編集可）。</p>
             <button onclick="closeModal()" class="btn-outline mt-4 text-center">キャンセル</button>
         </div>
     `;
@@ -2161,6 +2165,7 @@ fabAdd.addEventListener('click', () => {
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
     document.getElementById('upload-area').addEventListener('click', () => { closeModal(); nativeCameraInput.click(); });
+    document.getElementById('btn-bulk-add').addEventListener('click', () => { closeModal(); startBulkAdd(); });
 });
 
 let currentUploadedImage = null;
@@ -2168,10 +2173,160 @@ nativeCameraInput.addEventListener('change', (e) => {
     if (e.target.files && e.target.files[0]) {
         const file = e.target.files[0];
         const reader = new FileReader();
-        reader.onload = (ev) => { currentUploadedImage = ev.target.result; showAIAnalysisModal(); };
+        reader.onload = async (ev) => { currentUploadedImage = await compressImage(ev.target.result); showAIAnalysisModal(); };
         reader.readAsDataURL(file);
     }
 });
+
+// =============================================
+// まとめて登録（複数枚・AIおまかせ）
+// =============================================
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = (e) => resolve(e.target.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+    });
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// 画像を縮小・圧縮（長辺maxSize・JPEG）。容量削減＆アップロード高速化。失敗時は元画像を返す。
+function compressImage(dataUrl, maxSize = 800, quality = 0.7) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    let w = img.width, h = img.height;
+                    if (w > maxSize || h > maxSize) {
+                        if (w >= h) { h = Math.round(h * maxSize / w); w = maxSize; }
+                        else { w = Math.round(w * maxSize / h); h = maxSize; }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                } catch (e) { resolve(dataUrl); }
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        } catch (e) { resolve(dataUrl); }
+    });
+}
+
+// 1枚をAIで解析してタグ情報を返す（失敗時は無難なデフォルト）
+async function analyzeGarment(imageDataUrl) {
+    const data = { image: imageDataUrl, category: "トップス", subCategory: "", colors: ["白"], lightness: "指定なし", styles: ["カジュアル系"], seasons: ["オールシーズン"], memo: "", size: "", gender: "男女兼用" };
+    const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
+{"category":"トップス または アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（羽織るものは「アウター」、バッグ・ベルト・ネクタイ・小物類は「小物」）","subCategory":"カテゴリに合った種類","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
+    // レート制限/一時失敗に備えて最大2回試行（2回目は少し待つ）
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const result = await callGemini(prompt, imageDataUrl);
+            const m = result && result.match(/\{[\s\S]*\}/);
+            if (m) {
+                const p = JSON.parse(m[0]);
+                if (CATEGORIES.hasOwnProperty(p.category)) data.category = p.category;
+                if (typeof p.subCategory === 'string') data.subCategory = p.subCategory;
+                if (Array.isArray(p.colors)) { const c = p.colors.filter(x => COLORS.includes(x)); if (c.length) data.colors = c; }
+                if (Array.isArray(p.styles)) { const s = p.styles.filter(x => STYLES.includes(x)); if (s.length) data.styles = s; }
+                if (Array.isArray(p.seasons)) { const se = p.seasons.filter(x => SEASONS.includes(x)); if (se.length) data.seasons = se; }
+                return data;
+            }
+        } catch (e) { /* リトライへ */ }
+        if (attempt === 0) await sleep(1500); // 1回目失敗時に小休止してから再試行
+    }
+    return data; // 失敗時は無難なデフォルト
+}
+
+// 1点を保存（ゲスト=sessionStorage / ログイン=Firestore+Storage）
+async function saveBulkItem(fields, idx) {
+    if (isGuest) {
+        closetItems.unshift({ id: 'g' + Date.now() + '-' + idx, createdAt: Date.now() + idx, ...fields });
+        saveGuestCloset();
+        return;
+    }
+    if (!currentUser) return;
+    const imgRef = ref(storage, 'images/' + currentUser.uid + '/' + Date.now() + '-' + idx + '.jpg');
+    await uploadString(imgRef, fields.image, 'data_url');
+    const url = await getDownloadURL(imgRef);
+    const docData = {
+        userId: currentUser.uid, createdAt: Date.now() + idx, image: url,
+        category: fields.category, subCategory: fields.subCategory, colors: fields.colors,
+        lightness: fields.lightness, styles: fields.styles, seasons: fields.seasons,
+        memo: '', size: '', gender: fields.gender || '男女兼用'
+    };
+    const docRef = await addDoc(collection(db, "closetItems"), docData);
+    closetItems.unshift({ id: docRef.id, ...docData });
+}
+
+function showBulkProgressModal(total) {
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content text-center">
+            <h3 class="section-title">まとめて登録中…</h3>
+            <i data-lucide="loader" class="spinner" style="width:32px; height:32px; color:var(--primary-color); display:block; margin:0 auto 12px;"></i>
+            <p id="bulk-progress" style="font-weight:600;">0 / ${total} 点</p>
+            <p style="font-size:0.78rem; color:var(--text-secondary); margin-top:8px;">AIが1枚ずつ自動でタグ付けしています…</p>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+}
+function updateBulkProgress(done, total) {
+    const el = document.getElementById('bulk-progress');
+    if (el) el.textContent = `${done} / ${total} 点`;
+}
+
+// 複数ファイルを順に解析→保存
+async function bulkAddImages(fileList) {
+    const BULK_MAX = 15; // 1回のレート制限/負荷を抑えるためのバッチ上限
+    let files = Array.from(fileList).filter(f => f.type && f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    // ゲストは残り枠まで
+    if (isGuest) {
+        const room = GUEST_MAX_ITEMS - closetItems.length;
+        if (room <= 0) { alert(`お試しモードは${GUEST_MAX_ITEMS}点まで登録できます。続きはログインしてご利用ください。`); return; }
+        if (files.length > room) { files = files.slice(0, room); alert(`お試しモードは残り${room}点までです。先頭${room}枚を登録します。`); }
+    }
+    // 1回のバッチ上限（AIレート制限対策）
+    if (files.length > BULK_MAX) {
+        alert(`一度に登録できるのは${BULK_MAX}枚までです。先頭${BULK_MAX}枚を登録します（残りはもう一度お試しください）。`);
+        files = files.slice(0, BULK_MAX);
+    }
+    const total = files.length;
+    showBulkProgressModal(total);
+    let ok = 0;
+    for (let i = 0; i < total; i++) {
+        try {
+            let dataUrl = await readFileAsDataURL(files[i]);
+            dataUrl = await compressImage(dataUrl); // 縮小・圧縮（容量＆通信を節約）
+            const fields = await analyzeGarment(dataUrl);
+            await saveBulkItem(fields, i);
+            ok++;
+        } catch (e) { console.warn('一括登録: 1件スキップ', e); }
+        updateBulkProgress(i + 1, total);
+        if (i < total - 1) await sleep(600); // 呼び出し間に小休止（レート制限対策）
+    }
+    if (typeof generateWeeklyOutfitsFromCloset === 'function') generateWeeklyOutfitsFromCloset();
+    closeModal();
+    navigate('closet');
+    setTimeout(() => alert(`${ok}点を登録しました。タグはAIおまかせです。気になる服はタップして編集できます。`), 150);
+}
+
+// 複数枚ファイル選択を起動
+window.startBulkAdd = function() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.style.display = 'none';
+    inp.addEventListener('change', (e) => {
+        const fs = e.target.files;
+        inp.remove();
+        if (fs && fs.length) bulkAddImages(fs);
+    });
+    document.body.appendChild(inp);
+    inp.click();
+};
 
 // AI画像解析（Geminiがあれば本物の解析、なければデフォルト値）
 async function showAIAnalysisModal() {
