@@ -165,19 +165,39 @@ async function callGemini(prompt, imageBase64 = null, opts = {}) {
         base64Data = imageBase64.replace(/^data:image\/[\w+]+;base64,/, '');
     }
 
-    const response = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType, json: opts.json || false })
-    });
+    // 429（混雑/無料枠レート制限）・503（一時的）やネットワーク不調は、待って自動リトライ。
+    // 無料枠の「1分あたり上限」は数秒で戻るため、指数バックオフで吸収する。
+    const MAX_ATTEMPTS = 3;
+    let lastErr = null;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        let response;
+        try {
+            response = await fetch(WORKER_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType, json: opts.json || false })
+            });
+        } catch (netErr) {
+            lastErr = netErr;
+            if (attempt < MAX_ATTEMPTS - 1) { await sleep(1200 * (attempt + 1)); continue; }
+            throw new Error('通信に失敗しました。電波の良い場所で再度お試しください。');
+        }
 
-    if (!response.ok) {
+        if (response.ok) {
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || null;
+        }
+
+        // 混雑・一時エラーは待って再試行（最後の試行を除く）
+        if ((response.status === 429 || response.status === 503) && attempt < MAX_ATTEMPTS - 1) {
+            await sleep(1500 * Math.pow(2, attempt) + Math.floor(Math.random() * 500)); // 指数バックオフ＋ゆらぎ
+            continue;
+        }
+
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error?.message || `APIエラー (${response.status})`);
     }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || null;
+    throw lastErr || new Error('AIが混雑しています。少し待って再度お試しください。');
 }
 
 // =============================================
@@ -945,6 +965,10 @@ function buildStoreLinksHTML(rec) {
     </div>`;
 }
 
+// AI結果のキャッシュ（無料枠の節約・再呼び出し防止）。クローゼットやコーデが変わるとキー不一致で自然に作り直す。
+let recommendCache = null, recommendCacheKey = '';
+const stylingTipsCache = new Map();
+
 window.showRecommendItems = async function() {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
@@ -983,24 +1007,31 @@ ${gender ? `【対象】このユーザーは${gender}の服が中心なので�
 - JSONのみで返す。
 形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"検索キーワード","category":"カテゴリ"}]}`;
 
-    let recs = [];
-    try {
-        const r = JSON.parse(await callGemini(prompt, null, { json: true }));
-        recs = (r.recommends || []).slice(0, 3);
-    } catch (e) { recs = []; }
-
-    // 各提案について楽天で実商品を取得（1件ずつ）
-    for (const rec of recs) {
-        rec.products = [];
+    const recKey = `${catStr}|${styleStr}|${colorStr}|${gender}`;
+    const fromCache = !!(recommendCache && recommendCacheKey === recKey);
+    let recs = fromCache ? recommendCache : [];
+    if (!fromCache) {
         try {
-            const res = await fetch(WORKER_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
-            });
-            const data = await res.json();
-            rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
-        } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
+            const r = JSON.parse(await callGemini(prompt, null, { json: true }));
+            recs = (r.recommends || []).slice(0, 3);
+        } catch (e) { recs = []; }
+    }
+
+    // 各提案について楽天で実商品を取得（1件ずつ）※キャッシュ再利用時はスキップ
+    if (!fromCache) {
+        for (const rec of recs) {
+            rec.products = [];
+            try {
+                const res = await fetch(WORKER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
+                });
+                const data = await res.json();
+                rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+            } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
+        }
+        if (recs.length) { recommendCache = recs; recommendCacheKey = recKey; }
     }
 
     // 表示
@@ -1838,12 +1869,10 @@ async function loadStylingTips(outfit) {
 - 専門用語を避け、初心者にも分かる言葉で。各コツは40字以内。
 - JSONのみで返す。
 形式: {"tips":["コツ1","コツ2","コツ3"]}`;
-    try {
-        const parsed = JSON.parse(await callGemini(prompt, null, { json: true }));
-        const tips = Array.isArray(parsed.tips) ? parsed.tips.filter(Boolean) : [];
+    const renderTips = (tips) => {
         const cur = document.getElementById('styling-tips'); // 取得中に閉じられた場合に備えて取り直す
         if (!cur) return;
-        if (tips.length) {
+        if (tips && tips.length) {
             cur.innerHTML = `<p style="font-weight:bold; color:var(--text-primary); margin-bottom:8px; font-size:0.9rem;">💡 着こなしのコツ</p>
                 <ul style="margin:0; padding-left:18px; font-size:0.84rem; color:var(--text-secondary); line-height:1.7;">
                     ${tips.map(t => `<li>${t}</li>`).join('')}
@@ -1851,6 +1880,14 @@ async function loadStylingTips(outfit) {
         } else {
             cur.style.display = 'none';
         }
+    };
+    // 同じコーデは一度取得したら使い回す（再表示でAIを呼ばない＝コスト・混雑対策）
+    if (stylingTipsCache.has(itemsText)) { renderTips(stylingTipsCache.get(itemsText)); return; }
+    try {
+        const parsed = JSON.parse(await callGemini(prompt, null, { json: true }));
+        const tips = Array.isArray(parsed.tips) ? parsed.tips.filter(Boolean) : [];
+        stylingTipsCache.set(itemsText, tips);
+        renderTips(tips);
     } catch (e) {
         const cur = document.getElementById('styling-tips');
         if (cur) cur.innerHTML = `<p style="font-size:0.8rem; color:var(--text-secondary); margin:0;">着こなしのコツを取得できませんでした。AI接続をご確認ください。</p>`;
@@ -2370,7 +2407,7 @@ async function bulkAddImages(fileList) {
             ok++;
         } catch (e) { console.warn('一括登録: 1件スキップ', e); }
         updateBulkProgress(i + 1, total);
-        if (i < total - 1) await sleep(600); // 呼び出し間に小休止（レート制限対策）
+        if (i < total - 1) await sleep(1000); // 呼び出し間に小休止（レート制限対策。callGemini側でも429は自動リトライ）
     }
     if (typeof generateWeeklyOutfitsFromCloset === 'function') generateWeeklyOutfitsFromCloset();
     closeModal();
