@@ -884,6 +884,67 @@ function getDominantGender() {
     return counts['メンズ'] > counts['レディース'] ? 'メンズ' : 'レディース';
 }
 
+// ===== 多店舗の検索リンク（買い足しおすすめ用） =====
+// どんな入力・障害でもリンクが壊れない設計（最悪でもGoogleサイト内検索に退避）。
+function googleSiteSearch(domain, kw) {
+    return 'https://www.google.com/search?q=' + encodeURIComponent((kw || '') + ' site:' + domain);
+}
+// ZOZOTOWNのWeb検索キーワードはShift_JIS指定。encoding.jsがあれば直リンク、無ければGoogle検索に退避。
+function zozoSearchURL(kw) {
+    try {
+        if (window.Encoding && Encoding.convert && Encoding.stringToCode) {
+            const sjis = Encoding.convert(Encoding.stringToCode(kw), { to: 'SJIS', from: 'UNICODE', type: 'array' });
+            // 63 = '?' = Shift_JISに変換できない文字が混入した印。混入時は直リンクを使わない。
+            if (sjis && sjis.length && sjis.indexOf(63) === -1) {
+                const pct = sjis.map(b => '%' + b.toString(16).toUpperCase().padStart(2, '0')).join('');
+                return 'https://zozo.jp/search/?p_keyv=' + pct;
+            }
+        }
+    } catch (e) { /* 変換失敗時は下のフォールバックへ */ }
+    return googleSiteSearch('zozo.jp', kw);
+}
+// 店ごとの正しい検索URLを返す（形式が確実な店は直リンク、不確実な店はGoogle検索）。
+function storeSearchURL(store, kw) {
+    kw = (kw || '').trim();
+    if (!kw) return null;                                  // 空キーワードはリンクを作らない
+    try {
+        const u = encodeURIComponent(kw);                  // UTF-8（楽天/ユニクロ/GU/LOCONDO）
+        switch (store) {
+            case 'rakuten': return 'https://search.rakuten.co.jp/search/mall/' + u + '/';
+            case 'uniqlo':  return 'https://www.uniqlo.com/jp/ja/search?q=' + u;
+            case 'gu':      return 'https://www.gu-global.com/jp/ja/search?q=' + u;
+            case 'locondo': return 'https://www.locondo.jp/shop/search?searchWord=' + u;
+            case 'abcmart': return googleSiteSearch('abc-mart.net', kw); // 検索仕様非公開→安全側
+            case 'zozo':    return zozoSearchURL(kw);
+            default:        return null;
+        }
+    } catch (e) {
+        return googleSiteSearch('rakuten.co.jp', kw);      // 想定外でも壊さない
+    }
+}
+const STORE_LABELS = { rakuten: '楽天', uniqlo: 'ユニクロ', gu: 'GU', zozo: 'ZOZOTOWN', locondo: 'LOCONDO', abcmart: 'ABC-MART' };
+// 提案カテゴリに合う店の並び（靴は靴専門店、それ以外は服・総合店）。
+function storesForCategory(cat) {
+    if (cat === '靴' || cat === 'シューズ') return ['locondo', 'rakuten', 'zozo', 'abcmart'];
+    return ['rakuten', 'uniqlo', 'gu', 'zozo']; // トップス/アウター/ボトムス/帽子/ワンピース/ドレス/スーツ/小物
+}
+// 1提案ぶんの「他のお店で探す」ボタン群HTML（カテゴリ別）。
+function buildStoreLinksHTML(rec) {
+    const kw = (rec && (rec.keyword || rec.item)) || '';
+    if (!kw.trim()) return '';
+    const stores = storesForCategory(rec && rec.category);
+    const btns = stores.map(s => {
+        const url = storeSearchURL(s, kw);
+        if (!url) return '';
+        return `<a href="${url}" target="_blank" rel="noopener" style="display:flex; align-items:center; justify-content:space-between; gap:4px; padding:7px 10px; border:1px solid rgba(0,0,0,0.12); border-radius:8px; text-decoration:none; color:inherit; font-size:0.78rem;">${STORE_LABELS[s] || s}<i data-lucide="external-link" style="width:13px; height:13px; opacity:.5;"></i></a>`;
+    }).filter(Boolean).join('');
+    if (!btns) return '';
+    return `<div style="margin-top:10px;">
+        <p style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">他のお店で「${rec.item || ''}」を探す</p>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">${btns}</div>
+    </div>`;
+}
+
 window.showRecommendItems = async function() {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
@@ -917,9 +978,10 @@ ${gender ? `【対象】このユーザーは${gender}の服が中心なので�
 ルール:
 - 手持ちに不足・手薄なカテゴリや色を補い、着回しが広がる物を選ぶ。
 - 各提案に、手持ちとの組み合わせ理由を一言添える。
-- keyword は楽天で検索する用の簡潔な日本語（${gender ? `必ず「${gender}」を含める。例「${gender} 白シャツ」` : '例「白 シャツ」'}）。
+- keyword は通販サイトで検索する用の簡潔な日本語（${gender ? `必ず「${gender}」を含める。例「${gender} 白シャツ」` : '例「白 シャツ」'}）。
+- category は次のいずれか1つだけ: トップス / アウター / ボトムス / 帽子 / 靴 / ワンピース / ドレス / スーツ / 小物。
 - JSONのみで返す。
-形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"楽天検索キーワード"}]}`;
+形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"検索キーワード","category":"カテゴリ"}]}`;
 
     let recs = [];
     try {
@@ -969,9 +1031,10 @@ ${gender ? `【対象】このユーザーは${gender}の服が中心なので�
                 });
                 html += `</div>`;
             }
+            html += buildStoreLinksHTML(rec);
             html += `</div>`;
         });
-        html += `<p style="font-size:0.7rem; color:var(--text-secondary);">※楽天市場の商品（アフィリエイトリンク）。タップで楽天が開きます。</p>`;
+        html += `<p style="font-size:0.7rem; color:var(--text-secondary);">※上段は楽天市場の実商品（アフィリエイト）。下段はカテゴリに合うお店の検索リンクです。</p>`;
     }
     html += `<button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button></div>`;
 
