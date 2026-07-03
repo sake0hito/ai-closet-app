@@ -27,7 +27,7 @@ const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.goo
 const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 
 const CATEGORIES = {
-    "トップス": ["カットソー", "Tシャツ", "タンクトップ", "シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
+    "トップス": ["カットソー", "Tシャツ", "ロゴTシャツ", "タンクトップ", "シャツ", "柄シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
     "アウター": ["ジャケット", "ブルゾン", "コート", "トレンチコート", "ダウンジャケット", "レザージャケット", "デニムジャケット", "マウンテンパーカ", "カーディガン", "ジレ・ベスト"],
     "ボトムス": ["デニム", "チノパン", "カーゴパンツ", "スラックス", "ショートパンツ", "クロップパンツ", "バミューダパンツ", "カプリパンツ", "スキニーパンツ", "サルエルパンツ", "テーパードパンツ", "ワイドパンツ", "ガウチョパンツ", "バギーパンツ", "その他のボトムス"],
     "帽子": ["ハット", "キャップ", "ニット帽", "その他の帽子"],
@@ -175,7 +175,7 @@ async function callGemini(prompt, imageBase64 = null, opts = {}) {
             response = await fetch(WORKER_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType, json: opts.json || false })
+                body: JSON.stringify({ prompt, imageBase64: base64Data, mimeType, json: opts.json || false, imageUrl: opts.imageUrl || null })
             });
         } catch (netErr) {
             lastErr = netErr;
@@ -575,6 +575,7 @@ const CHART_DIMS = {
     styles:   { label: 'スタイル', get: i => i.styles },
     colors:   { label: '色',       get: i => i.colors },
     category: { label: 'カテゴリ',  get: i => (i.category ? [i.category] : []) },
+    subCategory: { label: '種類',   get: i => (i.subCategory ? [i.subCategory] : []) },
     seasons:  { label: '季節',     get: i => i.seasons },
     gender:   { label: '対象',     get: i => (i.gender ? [i.gender] : []) },
 };
@@ -2161,7 +2162,7 @@ window.openItemDetails = function(id) {
             </div>
             ${item.size ? `<p style="font-size:0.9rem; margin-bottom:12px;"><span style="color:var(--text-secondary);">📏 サイズ：</span><strong>${item.size}</strong></p>` : ''}
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
-            <button onclick="showItemAR('${item.id}')" style="width:100%; background:var(--accent-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">📱 ARで見る（試着イメージ）</button>
+            ${'' /* 「ARで見る」ボタンは一旦非表示（第10回）。復活時はここに showItemAR を呼ぶボタンを戻す。関数 showItemAR 本体は残してある。 */}
             <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
             <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
         </div>
@@ -2317,14 +2318,15 @@ function compressImage(dataUrl, maxSize = 800, quality = 0.7) {
 }
 
 // 1枚をAIで解析してタグ情報を返す（失敗時は無難なデフォルト）
-async function analyzeGarment(imageDataUrl) {
+// imageUrl を渡すと画像取得を Worker 側に任せる（ログインユーザーのStorage画像・CORS回避）
+async function analyzeGarment(imageDataUrl, imageUrl = null) {
     const data = { image: imageDataUrl, category: "トップス", subCategory: "", colors: ["白"], lightness: "指定なし", styles: ["カジュアル系"], seasons: ["オールシーズン"], memo: "", size: "", gender: "男女兼用" };
     const prompt = `この服の画像を分析して、以下のJSON形式のみで回答してください（余分な説明・コードブロック不要）：
 {"category":"トップス または アウター または ボトムス または 帽子 または 靴 または ワンピース または ドレス または スーツ または 小物 のいずれか（羽織るものは「アウター」、バッグ・ベルト・ネクタイ・小物類は「小物」）","subCategory":"カテゴリに合った種類","colors":["赤 青 黄 緑 むらさき ピンク オレンジ ベージュ グレー 黒 白 から1〜2つ"],"styles":["カジュアル系 きれいめ（シンプル）系 エレガント系 クール系 フォーマル系 ストリート系 フェミニン・ガーリー系 アウトドア系 アメカジ系 から1〜2つ"],"seasons":["春 夏 秋 冬 オールシーズン から1つ以上"]}`;
     // レート制限/一時失敗に備えて最大2回試行（2回目は少し待つ）
     for (let attempt = 0; attempt < 2; attempt++) {
         try {
-            const result = await callGemini(prompt, imageDataUrl);
+            const result = imageUrl ? await callGemini(prompt, null, { imageUrl }) : await callGemini(prompt, imageDataUrl);
             const m = result && result.match(/\{[\s\S]*\}/);
             if (m) {
                 const p = JSON.parse(m[0]);
@@ -2531,7 +2533,9 @@ function renderEditFormContent() {
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <h3 class="section-title">${isNew ? '✨ AI解析結果の確認・修正' : '情報の編集'}</h3>
-            <img src="${currentEditData.image}" style="width:100%; height:160px; object-fit:cover; border-radius:12px; margin-bottom:16px;" alt="clothing">
+            <img src="${currentEditData.image}" style="width:100%; height:160px; object-fit:cover; border-radius:12px; margin-bottom:12px;" alt="clothing">
+
+            <button type="button" id="btn-reanalyze" onclick="reanalyzeEditImage()" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:10px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:16px; cursor:pointer;">🔁 この画像をAIで再解析</button>
 
             <div class="form-group"><label>カテゴリ</label>
                 <div class="form-btn-group">${renderSingleBtn('category', Object.keys(CATEGORIES))}</div>
@@ -2590,6 +2594,34 @@ function renderEditFormContent() {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
     document.getElementById('btn-save-item').addEventListener('click', () => saveItemData(isNew, existingId));
 }
+
+// 編集中の画像をAIで再解析し、種類・色・スタイル・季節を付け直す（画像・対象・サイズ・メモは保持）
+window.reanalyzeEditImage = async function() {
+    const btn = document.getElementById('btn-reanalyze');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 AIが再解析中...'; }
+    try {
+        const src = currentEditData.image || '';
+        let fields;
+        if (src.startsWith('data:')) {
+            // ゲスト等：端末内の data URL を圧縮して送る
+            const dataUrl = await compressImage(src);
+            fields = await analyzeGarment(dataUrl);
+        } else {
+            // ログイン：Storage等のURLは Worker 側で取得（ブラウザのCORSを回避）
+            fields = await analyzeGarment(null, src);
+        }
+        currentEditData.category = fields.category;
+        currentEditData.subCategory = fields.subCategory;
+        currentEditData.colors = fields.colors;
+        currentEditData.styles = fields.styles;
+        currentEditData.seasons = fields.seasons;
+        renderEditFormContent(); // 結果を反映して再描画（ボタンも元に戻る）
+    } catch (e) {
+        if (btn) { btn.disabled = false; btn.textContent = orig || '🔁 この画像をAIで再解析'; }
+        alert('画像の再解析に失敗しました。時間をおいて再度お試しください。');
+    }
+};
 
 // フォームの単一選択（スクロール位置を保持）
 window.setFormSingle = function(group, val) {
@@ -2926,14 +2958,17 @@ ${itemsDesc}
 
 // 旧スキーマ（title/image/closetItemId）と新スキーマ（items[]）の両対応
 function getHistoryDisplayData(h) {
+    // 後から追加した写真（photo）があれば先頭に出す
+    const custom = h.photo ? [h.photo] : [];
     if (h.items && h.items.length > 0) {
-        const imgs = h.items.map(it => it.image).filter(Boolean);
+        const imgs = custom.concat(h.items.map(it => it.image).filter(Boolean));
         const title = h.items.map(it => it.title || it.subCategory || it.category).filter(Boolean).join(' × ') || 'コーデ記録';
         return { images: imgs, title, occasion: h.occasion || '' };
     } else {
         // 旧スキーマ（後方互換）
         const img = h.image || null;
-        return { images: img ? [img] : [], title: h.title || 'コーデ記録', occasion: '' };
+        const imgs = custom.concat(img ? [img] : []);
+        return { images: imgs, title: h.title || 'コーデ記録', occasion: h.occasion || '' };
     }
 }
 
@@ -3183,10 +3218,36 @@ window.openHistoryDetail = function(id) {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
+// 着用履歴の写真の編集状態： undefined=変更なし / 文字列=新しい写真(dataURL) / null=削除
+let currentHistoryEditPhoto;
+window.onHistoryPhotoSelected = function(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+        currentHistoryEditPhoto = await compressImage(ev.target.result); // 縮小して保持
+        const prev = document.getElementById('history-photo-preview');
+        if (prev) prev.innerHTML = `<img src="${currentHistoryEditPhoto}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px;" alt="photo">`;
+        const rm = document.getElementById('btn-remove-history-photo');
+        if (rm) rm.style.display = '';
+    };
+    reader.readAsDataURL(file);
+};
+window.removeHistoryPhoto = function() {
+    currentHistoryEditPhoto = null; // 保存で確定
+    const prev = document.getElementById('history-photo-preview');
+    if (prev) prev.innerHTML = `<p style="color:var(--text-secondary); font-size:0.85rem; margin:0;">写真を削除します（保存で確定）</p>`;
+    const rm = document.getElementById('btn-remove-history-photo');
+    if (rm) rm.style.display = 'none';
+    const input = document.getElementById('history-photo-input');
+    if (input) input.value = '';
+};
+
 window.openHistoryEdit = function(id) {
     closeModal(); // 詳細モーダルを閉じてから編集モーダルを開く
     const h = wearHistory.find(x => x.id === id);
     if (!h) return;
+    currentHistoryEditPhoto = undefined; // 変更なしの初期状態
     const dateVal = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
     const display = getHistoryDisplayData(h);
 
@@ -3201,6 +3262,19 @@ window.openHistoryEdit = function(id) {
         <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
             <h3 class="section-title">着用履歴を編集</h3>
             <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">${thumbsHtml}</div>
+
+            <div class="form-group" style="margin-bottom:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">写真（任意・その日の実際のコーデなど）</label>
+                <div id="history-photo-preview" style="margin:8px 0;">
+                    ${h.photo
+                        ? `<img src="${h.photo}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px;" alt="photo">`
+                        : `<p style="color:var(--text-secondary); font-size:0.85rem; margin:0;">まだ写真はありません</p>`}
+                </div>
+                <input type="file" id="history-photo-input" accept="image/*" class="hidden" onchange="onHistoryPhotoSelected(this)">
+                <button type="button" onclick="document.getElementById('history-photo-input').click()" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">📷 写真を選ぶ（変更・追加）</button>
+                <button type="button" id="btn-remove-history-photo" onclick="removeHistoryPhoto()" style="width:100%; background:transparent; color:#ef4444; border:1px solid #ef4444; padding:8px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:8px; ${h.photo ? '' : 'display:none;'}">写真を削除</button>
+            </div>
+
             <div class="form-group">
                 <label style="font-weight:600; font-size:0.9rem;">着用日</label>
                 <input type="date" id="edit-history-date" class="input-field" value="${dateVal}" style="margin-top:6px;">
@@ -3232,10 +3306,31 @@ window.saveHistoryEdit = async function(id) {
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
     const isoDate = dateInput;
 
+    const fields = { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() };
+
+    // 写真の変更を反映（undefined=変更なし / null=削除 / dataURL=新しい写真）
+    try {
+        if (currentHistoryEditPhoto === null) {
+            fields.photo = ''; // 削除
+        } else if (typeof currentHistoryEditPhoto === 'string') {
+            if (isGuest) {
+                fields.photo = currentHistoryEditPhoto; // 端末内（data URL）
+            } else {
+                const pref = ref(storage, 'history_photos/' + currentUser.uid + '/' + id + '-' + Date.now() + '.jpg');
+                await uploadString(pref, currentHistoryEditPhoto, 'data_url');
+                fields.photo = await getDownloadURL(pref);
+            }
+        }
+    } catch (e) {
+        alert('写真の保存に失敗しました。時間をおいて再度お試しください。');
+        console.error(e);
+        return;
+    }
+
     if (isGuest) {
         if (!guestSaveConfirm()) return;
         const gidx = wearHistory.findIndex(h => h.id === id);
-        if (gidx !== -1) Object.assign(wearHistory[gidx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        if (gidx !== -1) Object.assign(wearHistory[gidx], fields);
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
         saveGuestHistory();
         closeModal();
@@ -3243,9 +3338,9 @@ window.saveHistoryEdit = async function(id) {
         return;
     }
     try {
-        await updateDoc(doc(db, "history", id), { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        await updateDoc(doc(db, "history", id), fields);
         const idx = wearHistory.findIndex(h => h.id === id);
-        if (idx !== -1) Object.assign(wearHistory[idx], { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() });
+        if (idx !== -1) Object.assign(wearHistory[idx], fields);
         wearHistory.sort((a, b) => b.createdAt - a.createdAt);
         closeModal();
         navigate('history');
