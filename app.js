@@ -1075,6 +1075,180 @@ ${gender ? `【対象】このユーザーは${gender}の服が中心なので�
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
+// ★お気に入りだけでコーデを提案（ローカルで組み合わせ・AI不要・即表示）。既存機能は変更しない“追加”。
+window.showFavoriteCoords = function() {
+    const favs = closetItems.filter(i => i.favorite);
+    const isTop = c => c === 'トップス' || c === 'アウター' || c === 'トップス・アウター';
+    const tops = favs.filter(i => isTop(i.category));
+    const bottoms = favs.filter(i => i.category === 'ボトムス');
+    const onepieces = favs.filter(i => ['ワンピース', 'ドレス', 'スーツ'].includes(i.category));
+    const accessories = favs.filter(i => ['小物', '帽子', '靴'].includes(i.category));
+
+    const openModal = (inner) => {
+        modalContainer.innerHTML = `
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+                <h3 class="section-title">★ お気に入りコーデ</h3>
+                ${inner}
+                <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+            </div>`;
+        modalContainer.classList.remove('hidden');
+        lucide.createIcons();
+        document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    };
+
+    if (favs.length === 0) {
+        openModal(`<p style="color:var(--text-secondary); font-size:0.9rem;">お気に入りの服がありません。クローゼットで服の右上の☆をタップして、お気に入りに登録してください。</p>`);
+        return;
+    }
+
+    // 組み合わせ：トップス×ボトムスを最大6件＋ワンピース/スーツ単体
+    const combos = [];
+    for (const t of tops) {
+        for (const b of bottoms) {
+            combos.push([t, b]);
+            if (combos.length >= 6) break;
+        }
+        if (combos.length >= 6) break;
+    }
+    onepieces.forEach(o => combos.push([o]));
+
+    if (combos.length === 0) {
+        openModal(`<p style="color:var(--text-secondary); font-size:0.9rem;">コーデを組むには、お気に入りに<strong>トップスとボトムスを1着ずつ</strong>（またはワンピース/スーツ）登録してください。<br>今のお気に入り：${favs.length}点</p>`);
+        return;
+    }
+
+    const accHint = accessories.length
+        ? `<p style="font-size:0.75rem; color:var(--text-secondary); margin-top:4px;">＋ お気に入りの小物・靴・帽子（${accessories.map(a => a.subCategory || a.category).join('・')}）を合わせても◎</p>`
+        : '';
+
+    const combosHtml = combos.map((c, idx) => {
+        const imgs = c.map(it => `
+            <div style="text-align:center;">
+                <img src="${it.image}" style="width:84px; height:84px; object-fit:cover; border-radius:10px;" alt="">
+                <p style="font-size:0.7rem; margin-top:3px; color:var(--text-secondary);">${it.subCategory || it.category}</p>
+            </div>`).join('<span style="align-self:center; font-size:1.2rem; color:var(--text-secondary);">＋</span>');
+        return `<div style="border:1px solid rgba(0,0,0,0.08); border-radius:12px; padding:12px; margin-bottom:12px;">
+            <p style="font-weight:bold; font-size:0.85rem; margin-bottom:8px;">コーデ ${idx + 1}</p>
+            <div style="display:flex; gap:8px; justify-content:center; align-items:stretch;">${imgs}</div>
+        </div>`;
+    }).join('');
+
+    openModal(`
+        <p style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:12px;">お気に入り(${favs.length}点)だけで組んだコーデ案です。</p>
+        ${combosHtml}
+        ${accHint}
+    `);
+};
+
+// ★お気に入りに似た/相性の良い買い足しを提案（AI＋楽天＋多店舗リンク）。既存の showRecommendItems とは別関数で“追加”。
+let favRecommendCache = null, favRecommendCacheKey = '';
+window.showFavoriteRecommend = async function() {
+    const favs = closetItems.filter(i => i.favorite);
+    const openInfo = (inner) => {
+        modalContainer.innerHTML = `
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+                <h3 class="section-title">★ お気に入りに似た買い足し</h3>
+                ${inner}
+                <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
+            </div>`;
+        modalContainer.classList.remove('hidden');
+        lucide.createIcons();
+        document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    };
+    if (favs.length === 0) {
+        openInfo(`<p style="color:var(--text-secondary); font-size:0.9rem;">お気に入りの服がありません。クローゼットで服の右上の☆をタップして登録すると、それに似た・相性の良い服を提案します。</p>`);
+        return;
+    }
+
+    // ローディング
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content text-center">
+            <i data-lucide="loader" class="spinner" style="width:32px; height:32px; color:var(--primary-color); display:block; margin:0 auto 12px;"></i>
+            <p style="font-weight:600;">お気に入りを分析中...</p>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+
+    const favDesc = favs.map(i => `${i.subCategory || i.category}(${(i.colors || []).join('・') || '色指定なし'}${(i.styles || []).length ? '／' + i.styles.join('・') : ''})`).join('、');
+    const gender = getDominantGender();
+    const favKey = favDesc + '|' + gender;
+
+    const prompt = `あなたはプロのスタイリストです。次は、ある人が「お気に入り」に登録した服の一覧です。
+【お気に入りの服】${favDesc}
+${gender ? `【対象】${gender}向けのアイテムにすること。` : ''}
+これらの「お気に入りに似た雰囲気」または「お気に入りと相性が良く着回しが広がる」アイテムで、まだ持っていなさそうな服を3点提案してください。
+ルール:
+- お気に入りの色・スタイル・テイストを踏まえる。
+- 各提案に、お気に入りとの関係（似ている／相性が良い理由）を一言添える。
+- keyword は通販サイトで検索する用の簡潔な日本語（${gender ? `必ず「${gender}」を含める。` : ''}）。
+- category は次のいずれか1つだけ: トップス / アウター / ボトムス / 帽子 / 靴 / ワンピース / ドレス / スーツ / 小物。
+- JSONのみで返す。
+形式: {"recommends":[{"item":"アイテム名","reason":"理由(1文)","keyword":"検索キーワード","category":"カテゴリ"}]}`;
+
+    const fromCache = !!(favRecommendCache && favRecommendCacheKey === favKey);
+    let recs = fromCache ? favRecommendCache : [];
+    if (!fromCache) {
+        try {
+            const r = JSON.parse(await callGemini(prompt, null, { json: true }));
+            recs = (r.recommends || []).slice(0, 3);
+        } catch (e) { recs = []; }
+        for (const rec of recs) {
+            rec.products = [];
+            try {
+                const res = await fetch(WORKER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
+                });
+                const data = await res.json();
+                rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+            } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
+        }
+        if (recs.length) { favRecommendCache = recs; favRecommendCacheKey = favKey; }
+    }
+
+    let html = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:80vh; overflow-y:auto;">
+            <h3 class="section-title">★ お気に入りに似た買い足し</h3>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">お気に入り(${favs.length}点)に似た・相性の良いアイテムを提案します。</p>`;
+    if (recs.length === 0) {
+        html += `<p style="color:var(--text-secondary); font-size:0.88rem;">提案の取得に失敗しました。時間をおいて再度お試しください。</p>`;
+    } else {
+        recs.forEach(rec => {
+            html += `<div style="border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:12px; margin-bottom:12px;">
+                <p style="font-weight:bold; margin-bottom:4px;">＋ ${rec.item || ''}</p>
+                <p style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:8px;">${rec.reason || ''}</p>`;
+            if (rec.products && rec.products.length) {
+                html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">`;
+                rec.products.forEach(p => {
+                    const img = (p.mediumImageUrls && p.mediumImageUrls[0] && p.mediumImageUrls[0].imageUrl) ||
+                                (p.smallImageUrls && p.smallImageUrls[0] && p.smallImageUrls[0].imageUrl) || '';
+                    html += `<a href="${p.itemUrl}" target="_blank" rel="noopener" style="text-decoration:none; color:inherit; border:1px solid rgba(0,0,0,0.08); border-radius:8px; overflow:hidden; display:block;">
+                        <img src="${img}" style="width:100%; height:100px; object-fit:cover;" alt="item">
+                        <div style="padding:6px;">
+                            <p style="font-size:0.68rem; line-height:1.3; height:2.6em; overflow:hidden;">${p.itemName}</p>
+                            <p style="font-size:0.78rem; font-weight:bold; color:var(--primary-color); margin-top:2px;">¥${(p.itemPrice || 0).toLocaleString()}</p>
+                        </div>
+                    </a>`;
+                });
+                html += `</div>`;
+            }
+            html += buildStoreLinksHTML(rec);
+            html += `</div>`;
+        });
+        html += `<p style="font-size:0.7rem; color:var(--text-secondary);">※上段は楽天の実商品、下段はカテゴリに合うお店の検索リンクです。</p>`;
+    }
+    html += `<button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button></div>`;
+    modalContainer.innerHTML = html;
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+};
+
 // お店を探す：現在地の近くで指定キーワードをGoogleマップ検索（無料・APIキー不要）
 window.openMapSearch = function(keyword) {
     let q = keyword;
@@ -1459,6 +1633,8 @@ const routes = {
                 ${tile("openCoordRoomModal()", "shirt",          "コーデ検証ルーム",     "var(--primary-color)")}
                 ${tile("openChatModal()",      "message-circle", "AIスタイリスト相談",   "var(--primary-color)")}
                 ${tile("showRecommendItems()", "shopping-bag",   "買い足しおすすめ",     "var(--accent-color)")}
+                ${tile("showFavoriteCoords()",   "star",         "お気に入りコーデ",         "#f59e0b")}
+                ${tile("showFavoriteRecommend()","sparkles",     "お気に入りに似た買い足し", "#f59e0b")}
                 ${tile("openMapModal()",       "map-pin",        "お店を探す",           "var(--primary-color)")}
                 ${comingSoonTile("user",       "マネキン試着")}
             </div>
@@ -1516,7 +1692,7 @@ const routes = {
 
             // 保存した画像の表示順を変更（新しい順／古い順／カテゴリ順）
             if (closetItems.length > 0) {
-                const sortOpts = [['newest', '新しい順'], ['oldest', '古い順'], ['category', 'カテゴリ順']];
+                const sortOpts = [['newest', '新しい順'], ['oldest', '古い順'], ['category', 'カテゴリ順'], ['favorite', '★お気に入り']];
                 const sortBtns = sortOpts.map(([key, label]) =>
                     `<button onclick="setClosetSort('${key}')" style="border:1px solid var(--primary-color); border-radius:14px; padding:4px 12px; font-size:0.72rem; cursor:pointer; background:${closetSort === key ? 'var(--primary-color)' : 'transparent'}; color:${closetSort === key ? '#fff' : 'var(--primary-color)'};">${label}</button>`
                 ).join('');
@@ -1530,8 +1706,9 @@ const routes = {
                     ${filtered.map(item => {
                         const tags = formatTags(item);
                         return `
-                        <div class="closet-item" data-id="${item.id}" onclick="handleClosetItemClick('${item.id}')">
+                        <div class="closet-item" data-id="${item.id}" onclick="handleClosetItemClick('${item.id}')" style="position:relative;">
                             <img src="${item.image}" alt="clothing">
+                            <button id="fav-btn-${item.id}" onclick="event.stopPropagation(); toggleFavorite('${item.id}')" aria-label="お気に入り" style="position:absolute; top:6px; right:6px; width:30px; height:30px; border:none; border-radius:50%; background:rgba(255,255,255,0.9); box-shadow:0 1px 3px rgba(0,0,0,0.2); font-size:16px; line-height:1; padding:0; cursor:pointer; z-index:2; color:${item.favorite ? '#f59e0b' : '#9ca3af'};">${item.favorite ? '★' : '☆'}</button>
                             <div class="item-tags">
                                 ${tags.slice(0,3).map(t => `<span class="tag-small">${t}</span>`).join('')}
                                 ${tags.length > 3 ? `<span class="tag-small">...</span>` : ''}
@@ -2163,6 +2340,7 @@ window.openItemDetails = function(id) {
             ${item.size ? `<p style="font-size:0.9rem; margin-bottom:12px;"><span style="color:var(--text-secondary);">📏 サイズ：</span><strong>${item.size}</strong></p>` : ''}
             ${item.memo ? `<p style="font-size:0.9rem; color:var(--text-secondary); margin-bottom:16px;">${item.memo}</p>` : ''}
             ${'' /* 「ARで見る」ボタンは一旦非表示（第10回）。復活時はここに showItemAR を呼ぶボタンを戻す。関数 showItemAR 本体は残してある。 */}
+            <button id="fav-detail-${item.id}" onclick="toggleFavorite('${item.id}')" style="width:100%; background:var(--surface-solid); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer; color:${item.favorite ? '#f59e0b' : 'var(--text-secondary)'}; border:2px solid ${item.favorite ? '#f59e0b' : 'rgba(0,0,0,0.15)'};">${item.favorite ? '★ お気に入り' : '☆ お気に入りに追加'}</button>
             <button onclick="openEditForm('${item.id}')" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; margin-bottom:12px; cursor:pointer;">編集する</button>
             <button onclick="closeModal()" class="btn-outline text-center">閉じる</button>
         </div>
@@ -2230,6 +2408,12 @@ function sortClosetItems(items) {
             if (ca !== cb) return ca - cb;
             return (b.createdAt || 0) - (a.createdAt || 0); // 同カテゴリ内は新しい順
         });
+    } else if (closetSort === 'favorite') {
+        arr.sort((a, b) => {
+            const fa = a.favorite ? 1 : 0, fb = b.favorite ? 1 : 0;
+            if (fa !== fb) return fb - fa;                     // お気に入りを先頭に
+            return (b.createdAt || 0) - (a.createdAt || 0);    // 同グループ内は新しい順
+        });
     } else {
         arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); // newest（既定）
     }
@@ -2237,9 +2421,30 @@ function sortClosetItems(items) {
 }
 
 window.setClosetSort = function(order) {
-    closetSort = ['newest', 'oldest', 'category'].includes(order) ? order : 'newest';
+    closetSort = ['newest', 'oldest', 'category', 'favorite'].includes(order) ? order : 'newest';
     try { localStorage.setItem('closet_sort', closetSort); } catch(e) {}
     navigate('closet');
+};
+
+// お気に入り（星）の切り替え。クローゼットの服に favorite フラグを持たせる。
+window.toggleFavorite = async function(id) {
+    const it = closetItems.find(i => i.id === id);
+    if (!it) return;
+    it.favorite = !it.favorite;
+    // 星ボタンの見た目を即時反映（一覧・詳細のどちらが開いていても）
+    const gridBtn = document.getElementById('fav-btn-' + id);
+    if (gridBtn) { gridBtn.textContent = it.favorite ? '★' : '☆'; gridBtn.style.color = it.favorite ? '#f59e0b' : '#9ca3af'; }
+    const detailBtn = document.getElementById('fav-detail-' + id);
+    if (detailBtn) {
+        detailBtn.innerHTML = it.favorite ? '★ お気に入り' : '☆ お気に入りに追加';
+        detailBtn.style.color = it.favorite ? '#f59e0b' : 'var(--text-secondary)';
+        detailBtn.style.borderColor = it.favorite ? '#f59e0b' : 'rgba(0,0,0,0.15)';
+    }
+    // 保存（ゲスト=端末内 / ログイン=Firestore。favorite だけ更新なので他項目は保持）
+    try {
+        if (isGuest) { saveGuestCloset(); }
+        else if (currentUser) { await updateDoc(doc(db, "closetItems", id), { favorite: it.favorite }); }
+    } catch (e) { console.error('お気に入りの保存に失敗', e); }
 };
 
 // =============================================
