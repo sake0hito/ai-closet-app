@@ -2958,17 +2958,14 @@ ${itemsDesc}
 
 // 旧スキーマ（title/image/closetItemId）と新スキーマ（items[]）の両対応
 function getHistoryDisplayData(h) {
-    // 後から追加した写真（photo）があれば先頭に出す
-    const custom = h.photo ? [h.photo] : [];
     if (h.items && h.items.length > 0) {
-        const imgs = custom.concat(h.items.map(it => it.image).filter(Boolean));
+        const imgs = h.items.map(it => it.image).filter(Boolean);
         const title = h.items.map(it => it.title || it.subCategory || it.category).filter(Boolean).join(' × ') || 'コーデ記録';
         return { images: imgs, title, occasion: h.occasion || '' };
     } else {
         // 旧スキーマ（後方互換）
         const img = h.image || null;
-        const imgs = custom.concat(img ? [img] : []);
-        return { images: imgs, title: h.title || 'コーデ記録', occasion: h.occasion || '' };
+        return { images: img ? [img] : [], title: h.title || 'コーデ記録', occasion: h.occasion || '' };
     }
 }
 
@@ -3218,61 +3215,49 @@ window.openHistoryDetail = function(id) {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
-// 着用履歴の写真の編集状態： undefined=変更なし / 文字列=新しい写真(dataURL) / null=削除
-let currentHistoryEditPhoto;
-window.onHistoryPhotoSelected = function(input) {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-        currentHistoryEditPhoto = await compressImage(ev.target.result); // 縮小して保持
-        const prev = document.getElementById('history-photo-preview');
-        if (prev) prev.innerHTML = `<img src="${currentHistoryEditPhoto}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px;" alt="photo">`;
-        const rm = document.getElementById('btn-remove-history-photo');
-        if (rm) rm.style.display = '';
-    };
-    reader.readAsDataURL(file);
-};
-window.removeHistoryPhoto = function() {
-    currentHistoryEditPhoto = null; // 保存で確定
-    const prev = document.getElementById('history-photo-preview');
-    if (prev) prev.innerHTML = `<p style="color:var(--text-secondary); font-size:0.85rem; margin:0;">写真を削除します（保存で確定）</p>`;
-    const rm = document.getElementById('btn-remove-history-photo');
-    if (rm) rm.style.display = 'none';
-    const input = document.getElementById('history-photo-input');
-    if (input) input.value = '';
-};
-
 window.openHistoryEdit = function(id) {
     closeModal(); // 詳細モーダルを閉じてから編集モーダルを開く
     const h = wearHistory.find(x => x.id === id);
     if (!h) return;
-    currentHistoryEditPhoto = undefined; // 変更なしの初期状態
     const dateVal = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
-    const display = getHistoryDisplayData(h);
 
-    // サムネイル表示
+    // この記録に入っている服を、クローゼットと突き合わせて初期選択に（closetItemId か 画像URL で一致判定）
+    const recImgs = (h.items || []).map(it => it.image).filter(Boolean);
+    const recIds  = (h.items || []).map(it => it.closetItemId).filter(Boolean);
+    selectedHistoryItems = new Set(
+        closetItems.filter(ci => recIds.includes(ci.id) || recImgs.includes(ci.image)).map(ci => ci.id)
+    );
+
+    // 現在の「この日の着用」サムネイル
+    const display = getHistoryDisplayData(h);
     const thumbsHtml = display.images.length > 0
         ? display.images.slice(0, 4).map(img =>
             `<img src="${img}" style="width:60px; height:60px; border-radius:8px; object-fit:cover;">`).join('')
         : `<span style="color:var(--text-secondary); font-size:0.85rem;">服の選択なし</span>`;
 
+    // クローゼットのグリッド（この記録に入っている服は「選択済み」表示）
+    const gridHtml = closetItems.length === 0
+        ? '<p style="color:var(--text-secondary); font-size:0.85rem;">クローゼットに服がありません</p>'
+        : closetItems.map(item => {
+            const sel = selectedHistoryItems.has(item.id);
+            return `<div class="closet-item ${sel ? 'selected' : ''}" id="hist-item-${item.id}" onclick="toggleHistoryItem('${item.id}')" style="cursor:pointer; position:relative;">
+                <img src="${item.image}" alt="">
+                <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
+                <span id="hist-badge-${item.id}" style="position:absolute; top:4px; right:4px; background:var(--primary-color); color:#fff; font-size:0.6rem; padding:1px 6px; border-radius:8px; display:${sel ? 'block' : 'none'};">選択済み</span>
+            </div>`;
+        }).join('');
+
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
             <h3 class="section-title">着用履歴を編集</h3>
-            <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">${thumbsHtml}</div>
+            <p style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">👕 この日の着用（現在）</p>
+            <div style="display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">${thumbsHtml}</div>
 
             <div class="form-group" style="margin-bottom:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">写真（任意・その日の実際のコーデなど）</label>
-                <div id="history-photo-preview" style="margin:8px 0;">
-                    ${h.photo
-                        ? `<img src="${h.photo}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px;" alt="photo">`
-                        : `<p style="color:var(--text-secondary); font-size:0.85rem; margin:0;">まだ写真はありません</p>`}
-                </div>
-                <input type="file" id="history-photo-input" accept="image/*" class="hidden" onchange="onHistoryPhotoSelected(this)">
-                <button type="button" onclick="document.getElementById('history-photo-input').click()" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:10px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer;">📷 写真を選ぶ（変更・追加）</button>
-                <button type="button" id="btn-remove-history-photo" onclick="removeHistoryPhoto()" style="width:100%; background:transparent; color:#ef4444; border:1px solid #ef4444; padding:8px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:8px; ${h.photo ? '' : 'display:none;'}">写真を削除</button>
+                <label style="font-weight:600; font-size:0.9rem;">着ていた服を選び直す</label>
+                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットからタップで選択／解除。間違えて記録した服もここで直せます。保存すると上の「この日の着用」に反映されます。</p>
+                <div class="closet-grid" style="max-height:240px; overflow-y:auto;">${gridHtml}</div>
             </div>
 
             <div class="form-group">
@@ -3306,26 +3291,13 @@ window.saveHistoryEdit = async function(id) {
     const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
     const isoDate = dateInput;
 
-    const fields = { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime() };
-
-    // 写真の変更を反映（undefined=変更なし / null=削除 / dataURL=新しい写真）
-    try {
-        if (currentHistoryEditPhoto === null) {
-            fields.photo = ''; // 削除
-        } else if (typeof currentHistoryEditPhoto === 'string') {
-            if (isGuest) {
-                fields.photo = currentHistoryEditPhoto; // 端末内（data URL）
-            } else {
-                const pref = ref(storage, 'history_photos/' + currentUser.uid + '/' + id + '-' + Date.now() + '.jpg');
-                await uploadString(pref, currentHistoryEditPhoto, 'data_url');
-                fields.photo = await getDownloadURL(pref);
-            }
-        }
-    } catch (e) {
-        alert('写真の保存に失敗しました。時間をおいて再度お試しください。');
-        console.error(e);
-        return;
-    }
+    // 選択した服で「この日の着用」を作り直す（間違えて記録した服の修正・追加・削除に対応）
+    const items = [...selectedHistoryItems].map(cid => {
+        const ci = closetItems.find(i => i.id === cid);
+        if (!ci) return null;
+        return { closetItemId: ci.id, image: ci.image, category: ci.category, subCategory: ci.subCategory || '', title: ci.subCategory || ci.category };
+    }).filter(Boolean);
+    const fields = { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime(), items };
 
     if (isGuest) {
         if (!guestSaveConfirm()) return;
@@ -3422,6 +3394,9 @@ window.toggleHistoryItem = function(id) {
         selectedHistoryItems.add(id);
         document.getElementById('hist-item-' + id)?.classList.add('selected');
     }
+    // 「選択済み」バッジ（編集画面のグリッドにのみ存在）を同期
+    const badge = document.getElementById('hist-badge-' + id);
+    if (badge) badge.style.display = selectedHistoryItems.has(id) ? 'block' : 'none';
 };
 
 window.saveManualHistory = async function() {
