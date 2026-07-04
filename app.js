@@ -793,10 +793,12 @@ function generateWeeklyOutfitsFromCloset() {
                 let topsImage = null, bottomsImage = null;
                 if (h.items && h.items.length > 0) {
                     const topsItem = h.items.find(it =>
-                        it.category === 'トップス' || it.category === 'トップス・アウター' || it.category === 'ワンピース' || it.category === 'ドレス');
+                        ['トップス', 'トップス・アウター', 'アウター', 'ワンピース', 'ドレス', 'スーツ'].includes(it.category));
                     const bottomsItem = h.items.find(it => it.category === 'ボトムス');
-                    topsImage    = topsItem?.image || display.images[0];
-                    bottomsImage = bottomsItem?.image || null;
+                    topsImage    = topsItem ? topsItem.image : null;
+                    bottomsImage = bottomsItem ? bottomsItem.image : null;
+                    // 上半身が特定できない時だけ、ボトムスと重複しない先頭画像で補完（同じボトムスが2枚出るバグ対策）
+                    if (!topsImage) topsImage = display.images.find(img => img !== bottomsImage) || null;
                 } else {
                     topsImage = display.images[0] || null;
                 }
@@ -3420,70 +3422,198 @@ window.openHistoryDetail = function(id) {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 };
 
+// ===== 着用履歴 統一エディタ（記録・編集 共通。カテゴリ別・複数追加＋✕削除） =====
+// カテゴリのグループ（コーデ検証ルームに合わせた括り）
+const HIST_CATS = [
+    { label: 'トップス／アウター', cats: ['トップス', 'トップス・アウター', 'アウター'] },
+    { label: 'ワンピース',        cats: ['ワンピース', 'ドレス'] },
+    { label: 'スーツ',            cats: ['スーツ'] },
+    { label: 'ボトムス',          cats: ['ボトムス'] },
+    { label: '帽子',              cats: ['帽子'] },
+    { label: '靴',                cats: ['靴'] },
+    { label: '小物',              cats: ['小物'] },
+];
+let histEditState = { mode: 'add', id: null, date: '', occasion: '', memo: '' };
+
+// 記録を編集で開く
 window.openHistoryEdit = function(id) {
-    closeModal(); // 詳細モーダルを閉じてから編集モーダルを開く
+    closeModal();
     const h = wearHistory.find(x => x.id === id);
     if (!h) return;
-    const dateVal = h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
-
-    // この記録に入っている服を、クローゼットと突き合わせて初期選択に（closetItemId か 画像URL で一致判定）
+    // この記録の服をクローゼットと突き合わせて初期選択に（closetItemId か 画像URL で一致判定）
     const recImgs = (h.items || []).map(it => it.image).filter(Boolean);
     const recIds  = (h.items || []).map(it => it.closetItemId).filter(Boolean);
     selectedHistoryItems = new Set(
         closetItems.filter(ci => recIds.includes(ci.id) || recImgs.includes(ci.image)).map(ci => ci.id)
     );
+    histEditState = {
+        mode: 'edit', id,
+        date: h.isoDate || (h.createdAt ? new Date(h.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+        occasion: h.occasion || '', memo: h.memo || ''
+    };
+    renderHistoryEditor();
+};
 
-    // 現在の「この日の着用」サムネイル
-    const display = getHistoryDisplayData(h);
-    const thumbsHtml = display.images.length > 0
-        ? display.images.slice(0, 4).map(img =>
-            `<img src="${img}" style="width:60px; height:60px; border-radius:8px; object-fit:cover;">`).join('')
-        : `<span style="color:var(--text-secondary); font-size:0.85rem;">服の選択なし</span>`;
+// 画面の入力値を state に退避（再描画で消えないように）
+function syncHistState() {
+    const d = document.getElementById('hist-date'); if (d) histEditState.date = d.value;
+    const o = document.getElementById('hist-occasion'); if (o) histEditState.occasion = o.value;
+    const m = document.getElementById('hist-memo'); if (m) histEditState.memo = m.value;
+}
 
-    // クローゼットのグリッド（この記録に入っている服は「選択済み」表示）
-    const gridHtml = closetItems.length === 0
-        ? '<p style="color:var(--text-secondary); font-size:0.85rem;">クローゼットに服がありません</p>'
-        : closetItems.map(item => {
-            const sel = selectedHistoryItems.has(item.id);
-            return `<div class="closet-item ${sel ? 'selected' : ''}" id="hist-item-${item.id}" onclick="toggleHistoryItem('${item.id}')" style="cursor:pointer; position:relative;">
-                <img src="${item.image}" alt="">
-                <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
-                <span id="hist-badge-${item.id}" style="position:absolute; top:4px; right:4px; background:var(--primary-color); color:#fff; font-size:0.6rem; padding:1px 6px; border-radius:8px; display:${sel ? 'block' : 'none'};">選択済み</span>
+// 選択中の服をカテゴリ別に表示（各画像に✕、各カテゴリに＋追加、未選択カテゴリは＋チップ）
+function renderHistItemsHTML() {
+    const selected = [...selectedHistoryItems].map(id => closetItems.find(i => i.id === id)).filter(Boolean);
+    let rows = '';
+    HIST_CATS.forEach((g, gi) => {
+        const inCat = selected.filter(ci => g.cats.includes(ci.category));
+        if (inCat.length === 0) return;
+        const thumbs = inCat.map(ci => `
+            <div style="position:relative;">
+                <img src="${ci.image}" style="width:72px; height:72px; object-fit:cover; border-radius:10px;" alt="">
+                <button onclick="removeHistItem('${ci.id}')" aria-label="削除" style="position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%; background:#ef4444; color:#fff; border:2px solid var(--surface-solid); font-size:12px; line-height:1; padding:0; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+            </div>`).join('');
+        rows += `<p style="font-size:0.75rem; color:var(--text-secondary); margin:0 0 6px;">${g.label}</p>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:center;">
+                ${thumbs}
+                <button onclick="openHistCatPicker(${gi})" style="width:72px; height:72px; border-radius:10px; border:2px dashed var(--primary-color); background:transparent; color:var(--primary-color); font-size:0.72rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;"><span style="font-size:1.1rem;">＋</span>追加</button>
             </div>`;
-        }).join('');
+    });
+    const emptyChips = HIST_CATS.map((g, gi) => {
+        if (selected.some(ci => g.cats.includes(ci.category))) return '';
+        return `<button onclick="openHistCatPicker(${gi})" style="border:1px solid var(--primary-color); border-radius:16px; padding:5px 12px; background:transparent; color:var(--primary-color); font-size:0.75rem; cursor:pointer;">＋ ${g.label}</button>`;
+    }).filter(Boolean).join('');
+    const emptyBlock = emptyChips
+        ? `<div style="display:flex; gap:8px; flex-wrap:wrap; padding-top:8px; ${rows ? 'border-top:0.5px solid rgba(0,0,0,0.08);' : ''}"><span style="font-size:0.72rem; color:var(--text-secondary); align-self:center;">追加:</span>${emptyChips}</div>`
+        : '';
+    const noneMsg = selected.length === 0 ? '<p style="font-size:0.8rem; color:var(--text-secondary); margin:0 0 8px;">下のボタンから、着た服をカテゴリごとに追加できます（各カテゴリ複数OK）。</p>' : '';
+    return noneMsg + rows + emptyBlock;
+}
 
+// エディタ本体を描画
+function renderHistoryEditor() {
+    const isEdit = histEditState.mode === 'edit';
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
-            <h3 class="section-title">着用履歴を編集</h3>
-            <p style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">👕 この日の着用（現在）</p>
-            <div style="display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">${thumbsHtml}</div>
-
-            <div class="form-group" style="margin-bottom:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">着ていた服を選び直す</label>
-                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットからタップで選択／解除。間違えて記録した服もここで直せます。保存すると上の「この日の着用」に反映されます。</p>
-                <div class="closet-grid" style="max-height:240px; overflow-y:auto;">${gridHtml}</div>
-            </div>
-
+        <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
+            <h3 class="section-title">${isEdit ? '着用履歴を編集' : '👗 着用を記録する'}</h3>
             <div class="form-group">
                 <label style="font-weight:600; font-size:0.9rem;">着用日</label>
-                <input type="date" id="edit-history-date" class="input-field" value="${dateVal}" style="margin-top:6px;">
+                <input type="date" id="hist-date" class="input-field" value="${histEditState.date}" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
                 <label style="font-weight:600; font-size:0.9rem;">シーン（任意）</label>
-                <input type="text" id="edit-history-occasion" class="input-field" value="${h.occasion || ''}" placeholder="例：仕事、デートなど" style="margin-top:6px;">
+                <input type="text" id="hist-occasion" class="input-field" value="${(histEditState.occasion || '').replace(/"/g,'&quot;')}" placeholder="例：仕事、デートなど" style="margin-top:6px;">
             </div>
             <div class="form-group" style="margin-top:12px;">
                 <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
-                <input type="text" id="edit-history-memo" class="input-field" value="${h.memo || ''}" placeholder="例：暑かった、気に入った組み合わせ" style="margin-top:6px;">
+                <input type="text" id="hist-memo" class="input-field" value="${(histEditState.memo || '').replace(/"/g,'&quot;')}" placeholder="例：暑かった、気に入った組み合わせ" style="margin-top:6px;">
             </div>
-            <button onclick="saveHistoryEdit('${id}')" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
+            <div class="form-group" style="margin-top:12px;">
+                <label style="font-weight:600; font-size:0.9rem;">着た服（カテゴリごとに複数OK）</label>
+                <div style="margin-top:8px;">${renderHistItemsHTML()}</div>
+            </div>
+            <button onclick="saveHistoryRecord()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
             <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
-        </div>
-    `;
+        </div>`;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+}
+
+// カテゴリを絞ってクローゼットから選ぶ画面（＋追加を押すと開く）
+window.openHistCatPicker = function(groupIndex) {
+    syncHistState();
+    const g = HIST_CATS[groupIndex];
+    if (!g) return;
+    const items = closetItems.filter(ci => g.cats.includes(ci.category));
+    const gridHtml = items.length === 0
+        ? `<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">「${g.label}」の服がクローゼットにありません。</p>`
+        : `<div class="closet-grid">${items.map(item => {
+            const sel = selectedHistoryItems.has(item.id);
+            return `<div class="closet-item ${sel ? 'selected' : ''}" id="pick-item-${item.id}" onclick="toggleHistPick('${item.id}')" style="cursor:pointer; position:relative;">
+                <img src="${item.image}" alt="">
+                <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
+                <span id="pick-badge-${item.id}" style="position:absolute; top:4px; right:4px; background:var(--primary-color); color:#fff; font-size:0.6rem; padding:1px 6px; border-radius:8px; display:${sel ? 'block' : 'none'};">選択中</span>
+            </div>`;
+        }).join('')}</div>`;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
+            <h3 class="section-title">${g.label}を選ぶ</h3>
+            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px;">タップで選択／解除（複数OK）。選び終えたら「戻る」。</p>
+            ${gridHtml}
+            <button onclick="renderHistoryEditor()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px;">戻る（選んだ服を反映）</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', () => renderHistoryEditor());
+};
+
+// ピッカー内での選択トグル
+window.toggleHistPick = function(id) {
+    if (selectedHistoryItems.has(id)) selectedHistoryItems.delete(id);
+    else selectedHistoryItems.add(id);
+    const el = document.getElementById('pick-item-' + id); if (el) el.classList.toggle('selected');
+    const badge = document.getElementById('pick-badge-' + id); if (badge) badge.style.display = selectedHistoryItems.has(id) ? 'block' : 'none';
+};
+
+// エディタ上で1枚だけ削除（✕）
+window.removeHistItem = function(id) {
+    selectedHistoryItems.delete(id);
+    syncHistState();
+    renderHistoryEditor();
+};
+
+// 保存（記録・編集 共通）
+window.saveHistoryRecord = async function() {
+    syncHistState();
+    const dateInput = histEditState.date;
+    const occasion  = (histEditState.occasion || '').trim();
+    const memo      = (histEditState.memo || '').trim();
+    if (!dateInput) { alert('着用日を入力してください。'); return; }
+    const dateObj = new Date(dateInput);
+    const dateStr = dateObj.toLocaleDateString('ja-JP', {year:'numeric', month:'long', day:'numeric'}) + ' 着用';
+    const isoDate = dateInput;
+    const items = [...selectedHistoryItems].map(cid => {
+        const ci = closetItems.find(i => i.id === cid);
+        if (!ci) return null;
+        return { closetItemId: ci.id, image: ci.image, category: ci.category, subCategory: ci.subCategory || '', title: ci.subCategory || ci.category };
+    }).filter(Boolean);
+
+    if (histEditState.mode === 'edit') {
+        const id = histEditState.id;
+        const fields = { occasion, memo, dateStr, isoDate, createdAt: dateObj.getTime(), items };
+        if (isGuest) {
+            if (!guestSaveConfirm()) return;
+            const gi = wearHistory.findIndex(h => h.id === id);
+            if (gi !== -1) Object.assign(wearHistory[gi], fields);
+            wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+            saveGuestHistory(); closeModal(); navigate('history'); return;
+        }
+        try {
+            await updateDoc(doc(db, "history", id), fields);
+            const gi = wearHistory.findIndex(h => h.id === id);
+            if (gi !== -1) Object.assign(wearHistory[gi], fields);
+            wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+            closeModal(); navigate('history');
+        } catch(e) { alert('保存に失敗しました。'); console.error(e); }
+    } else {
+        if (isGuest) {
+            if (!guestSaveConfirm()) return;
+            wearHistory.unshift({ id: 'g' + Date.now(), dateStr, isoDate, occasion, items, memo, createdAt: dateObj.getTime() });
+            wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+            saveGuestHistory(); selectedHistoryItems = new Set(); closeModal(); navigate('history'); return;
+        }
+        if (!currentUser) return;
+        try {
+            const docData = { userId: currentUser.uid, dateStr, isoDate, occasion, items, memo, createdAt: dateObj.getTime() };
+            const docRef = await addDoc(collection(db, "history"), docData);
+            wearHistory.unshift({ id: docRef.id, ...docData });
+            wearHistory.sort((a, b) => b.createdAt - a.createdAt);
+            selectedHistoryItems = new Set(); closeModal(); navigate('history');
+        } catch(e) { alert('保存に失敗しました。'); console.error(e); }
+    }
 };
 
 window.saveHistoryEdit = async function(id) {
@@ -3549,45 +3679,9 @@ window.deleteHistoryItem = async function(id) {
 };
 
 window.openAddHistoryModal = function() {
-    const today = new Date().toISOString().split('T')[0];
-    selectedHistoryItems = new Set(); // リセット
-    modalContainer.innerHTML = `
-        <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
-            <h3 class="section-title">👗 着用を記録する</h3>
-            <div class="form-group">
-                <label style="font-weight:600; font-size:0.9rem;">着用日</label>
-                <input type="date" id="history-date" class="input-field" value="${today}" style="margin-top:6px;">
-            </div>
-            <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">シーン（任意）</label>
-                <input type="text" id="history-occasion" class="input-field" placeholder="例：仕事、デート、普段着など" style="margin-top:6px;">
-            </div>
-            <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">メモ（任意）</label>
-                <input type="text" id="history-memo" class="input-field" placeholder="例：暑かった、気に入った組み合わせ" style="margin-top:6px;">
-            </div>
-            <div class="form-group" style="margin-top:12px;">
-                <label style="font-weight:600; font-size:0.9rem;">服を選ぶ（複数選択可）</label>
-                <p style="font-size:0.75rem; color:var(--text-secondary); margin:4px 0 8px;">クローゼットからタップして選択（省略可）</p>
-                <div class="closet-grid" style="max-height:240px; overflow-y:auto;">
-                    ${closetItems.length === 0
-                        ? '<p style="color:var(--text-secondary); font-size:0.85rem;">クローゼットに服がありません</p>'
-                        : closetItems.map(item => `
-                            <div class="closet-item" id="hist-item-${item.id}" onclick="toggleHistoryItem('${item.id}')" style="cursor:pointer;">
-                                <img src="${item.image}" alt="">
-                                <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
-                            </div>`).join('')
-                    }
-                </div>
-            </div>
-            <button onclick="saveManualHistory()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px; margin-bottom:8px;">保存する</button>
-            <button onclick="closeModal()" class="btn-outline text-center">キャンセル</button>
-        </div>
-    `;
-    modalContainer.classList.remove('hidden');
-    lucide.createIcons();
-    document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+    selectedHistoryItems = new Set();
+    histEditState = { mode: 'add', id: null, date: new Date().toISOString().split('T')[0], occasion: '', memo: '' };
+    renderHistoryEditor();
 };
 
 let selectedHistoryItems = new Set(); // 複数選択対応
