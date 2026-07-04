@@ -3521,6 +3521,10 @@ function renderHistoryEditor() {
     document.querySelector('.modal-overlay').addEventListener('click', closeModal);
 }
 
+// renderHistoryEditor はインラインの onclick（「戻る」ボタン）からも呼ぶので window に公開する
+// （app.js は type="module" のため、公開しないと onclick から参照できず「戻る」が効かない）
+window.renderHistoryEditor = renderHistoryEditor;
+
 // カテゴリを絞ってクローゼットから選ぶ画面（＋追加を押すと開く）
 window.openHistCatPicker = function(groupIndex) {
     syncHistState();
