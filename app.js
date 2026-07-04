@@ -3535,31 +3535,29 @@ window.openHistCatPicker = function(groupIndex) {
         ? `<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">「${g.label}」の服がクローゼットにありません。</p>`
         : `<div class="closet-grid">${items.map(item => {
             const sel = selectedHistoryItems.has(item.id);
-            return `<div class="closet-item ${sel ? 'selected' : ''}" id="pick-item-${item.id}" onclick="toggleHistPick('${item.id}')" style="cursor:pointer; position:relative;">
+            return `<div class="closet-item ${sel ? 'selected' : ''}" onclick="pickHistItem('${item.id}')" style="cursor:pointer; position:relative;">
                 <img src="${item.image}" alt="">
                 <div class="item-tags"><span class="tag-small">${item.subCategory || item.category}</span></div>
-                <span id="pick-badge-${item.id}" style="position:absolute; top:4px; right:4px; background:var(--primary-color); color:#fff; font-size:0.6rem; padding:1px 6px; border-radius:8px; display:${sel ? 'block' : 'none'};">選択中</span>
+                ${sel ? `<span style="position:absolute; top:4px; right:4px; background:var(--primary-color); color:#fff; font-size:0.6rem; padding:1px 6px; border-radius:8px;">追加済み</span>` : ''}
             </div>`;
         }).join('')}</div>`;
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
             <h3 class="section-title">${g.label}を選ぶ</h3>
-            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px;">タップで選択／解除（複数OK）。選び終えたら「戻る」。</p>
+            <p style="font-size:0.78rem; color:var(--text-secondary); margin-bottom:10px;">服をタップすると追加して自動で戻ります。もう1つ足したいときは、戻った先で「＋追加」をもう一度。</p>
             ${gridHtml}
-            <button onclick="renderHistoryEditor()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:16px;">戻る（選んだ服を反映）</button>
+            <button onclick="renderHistoryEditor()" class="btn-outline text-center" style="margin-top:12px;">追加せずに戻る</button>
         </div>`;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', () => renderHistoryEditor());
 };
 
-// ピッカー内での選択トグル
-window.toggleHistPick = function(id) {
-    if (selectedHistoryItems.has(id)) selectedHistoryItems.delete(id);
-    else selectedHistoryItems.add(id);
-    const el = document.getElementById('pick-item-' + id); if (el) el.classList.toggle('selected');
-    const badge = document.getElementById('pick-badge-' + id); if (badge) badge.style.display = selectedHistoryItems.has(id) ? 'block' : 'none';
+// ピッカーで服を1つ選ぶ → 追加してエディタに自動で戻る（「戻る」に気付かない問題への対策）
+window.pickHistItem = function(id) {
+    selectedHistoryItems.add(id);
+    renderHistoryEditor();
 };
 
 // エディタ上で1枚だけ削除（✕）
