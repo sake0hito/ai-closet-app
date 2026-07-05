@@ -357,6 +357,29 @@ document.getElementById('btn-email-login').addEventListener('click', async () =>
     }
 });
 
+// ログイン画面のタブ切替（ログイン / 新規登録）。選んだ方だけ大きく出して導線を明確にする。
+window.setAuthMode = function(mode) {
+    const isReg = mode === 'register';
+    const tabLogin = document.getElementById('auth-tab-login');
+    const tabReg   = document.getElementById('auth-tab-register');
+    const btnLogin = document.getElementById('btn-email-login');
+    const btnReg   = document.getElementById('btn-email-register');
+    const hint     = document.getElementById('auth-mode-hint');
+    if (authError) authError.textContent = '';
+    if (tabLogin && tabReg) {
+        tabLogin.style.background = isReg ? 'transparent' : 'var(--primary-color)';
+        tabLogin.style.color      = isReg ? 'var(--primary-color)' : '#fff';
+        tabReg.style.background    = isReg ? 'var(--primary-color)' : 'transparent';
+        tabReg.style.color         = isReg ? '#fff' : 'var(--primary-color)';
+    }
+    if (btnLogin) btnLogin.style.display = isReg ? 'none' : '';
+    if (btnReg)   btnReg.style.display   = isReg ? '' : 'none';
+    if (hint) hint.textContent = isReg
+        ? '初めての方：メールとパスワード（6文字以上）でアカウントを作成します'
+        : 'アカウントをお持ちの方：メールとパスワードでログイン';
+};
+setAuthMode('login'); // 既定はログイン
+
 window.logout = async function() {
     if (isGuest) {
         // ゲストはログアウト＝お試し終了。ログイン画面に戻す（端末内データは残す）

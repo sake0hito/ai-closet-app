@@ -45,14 +45,19 @@
     <p>あなた専用のクローゼットを作るために、ログインまたは登録をお願いします。</p>
     <button id="btn-google-login" class="auth-btn-google">
       <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
-      Googleでログイン / 登録
+      Googleで続ける（ログイン / 登録）
     </button>
     <hr>
-    <p style="margin-bottom:8px;">またはメールアドレスで登録</p>
+    <p style="margin-bottom:8px;">またはメールアドレスで</p>
+    <div id="auth-tabs" style="display:flex; gap:8px; margin-bottom:10px;">
+      <button type="button" id="auth-tab-login" onclick="setAuthMode('login')" style="flex:1; padding:9px; border-radius:8px; border:1px solid var(--primary-color); background:var(--primary-color); color:#fff; font-weight:bold; cursor:pointer;">ログイン</button>
+      <button type="button" id="auth-tab-register" onclick="setAuthMode('register')" style="flex:1; padding:9px; border-radius:8px; border:1px solid var(--primary-color); background:transparent; color:var(--primary-color); font-weight:bold; cursor:pointer;">新規登録</button>
+    </div>
+    <p id="auth-mode-hint" style="margin-bottom:8px; font-size:0.82rem; color:var(--text-secondary);">アカウントをお持ちの方：メールとパスワードでログイン</p>
     <input type="email" id="auth-email" placeholder="メールアドレス">
     <input type="password" id="auth-password" placeholder="パスワード (6文字以上)">
     <button type="button" id="btn-email-login" class="auth-btn-primary">ログイン</button>
-    <button type="button" id="btn-email-register" class="auth-btn-secondary">新規登録</button>
+    <button type="button" id="btn-email-register" class="auth-btn-primary" style="display:none;">新規登録する</button>
     <div id="auth-error" style="color: #ef4444; font-size: 0.8rem; margin-top: 12px; min-height: 1.2rem;"></div>
     <button type="button" id="btn-skip-login" style="background:none; border:none; color:var(--text-secondary); text-decoration:underline; font-size:0.85rem; margin-top:6px; cursor:pointer;">登録せずに試す（お試しモード）</button>
   </div>
