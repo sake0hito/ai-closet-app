@@ -2283,7 +2283,7 @@ window.openGuideModal = function() {
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
-            <h3 class="section-title">📖 AI Closet の使い方</h3>
+            <h3 class="section-title">📖 digi-set の使い方</h3>
             ${step('📷', '① 服を登録', '右下の＋ボタンから写真を撮る/選ぶと、AIが色や季節を自動でタグ付け。内容を確認して保存します。')}
             ${step('👕', '② 1週間のコーデ予測', 'トップス（またはアウター）とボトムスを各1着以上登録すると、ホームに毎日のコーデが表示されます。')}
             ${step('✨', '③ 着こなしのコツ', 'コーデをタップすると、AIが「シャツはイン」などの着こなしのコツを教えてくれます。')}

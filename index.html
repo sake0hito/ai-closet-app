@@ -3,25 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AI Closet</title>
+<title>digi-set（デジゼット）</title>
 <!-- アプリアイコン / ファビコン（親フォルダの画像を参照） -->
-<link rel="icon" type="image/png" href="https://sake0hito.github.io/ai-closet-app/ai-closet-icon-512.png">
-<link rel="apple-touch-icon" href="https://sake0hito.github.io/ai-closet-app/ai-closet-icon-512.png">
+<link rel="icon" type="image/png" href="https://sake0hito.github.io/ai-closet-app/digi-set-icon-512.png">
+<link rel="apple-touch-icon" href="https://sake0hito.github.io/ai-closet-app/digi-set-icon-512.png">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0ea5e9">
-<meta name="description" content="AI Closet（AIクローゼット）は、自分の持っている服を登録するだけで、天気やトレンドに合わせてAIが毎日のコーディネートを提案してくれるWebアプリです。ログイン不要のお試しモードあり。">
+<meta name="description" content="digi-set（デジゼット）は、自分の持っている服を登録するだけで、天気やトレンドに合わせてAIが毎日のコーディネートを提案してくれるWebアプリです。ログイン不要のお試しモードあり。">
 <!-- OGP / Twitter Card（Discord・SNSのリンクカード用） -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="AI Closet">
-<meta property="og:title" content="AI Closet｜手持ちの服でAIが毎日のコーデを提案">
-<meta property="og:description" content="AI Closet（AIクローゼット）は、自分の持っている服を登録するだけで、天気やトレンドに合わせてAIが毎日のコーディネートを提案してくれるWebアプリです。ログイン不要のお試しモードあり。">
-<meta property="og:image" content="https://sake0hito.github.io/ai-closet-app/ai-closet-icon-512.png">
+<meta property="og:site_name" content="digi-set">
+<meta property="og:title" content="digi-set（デジゼット）｜手持ちの服でAIが毎日のコーデを提案">
+<meta property="og:description" content="digi-set（デジゼット）は、自分の持っている服を登録するだけで、天気やトレンドに合わせてAIが毎日のコーディネートを提案してくれるWebアプリです。ログイン不要のお試しモードあり。">
+<meta property="og:image" content="https://sake0hito.github.io/ai-closet-app/digi-set-icon-512.png">
 <meta property="og:url" content="https://ai-closet-app.vercel.app">
 <meta property="og:locale" content="ja_JP">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="AI Closet｜手持ちの服でAIが毎日のコーデを提案">
+<meta name="twitter:title" content="digi-set（デジゼット）｜手持ちの服でAIが毎日のコーデを提案">
 <meta name="twitter:description" content="自分の服を登録するだけで、天気やトレンドに合わせてAIが毎日のコーデを提案。ログイン不要のお試しモードあり。">
-<meta name="twitter:image" content="https://sake0hito.github.io/ai-closet-app/ai-closet-icon-512.png">
+<meta name="twitter:image" content="https://sake0hito.github.io/ai-closet-app/digi-set-icon-512.png">
 <link rel="stylesheet" href="style.css">
 <!-- Google Fonts -->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -41,7 +41,8 @@
 <!-- Auth Overlay (Login/Register) -->
 <div id="auth-overlay">
   <div class="auth-card">
-    <h2>AI Closet</h2>
+    <h2>digi-set</h2>
+    <p style="margin:-6px 0 10px; font-size:0.8rem; color:var(--text-secondary);">デジゼット｜手持ちの服でAIが毎日のコーデ提案</p>
     <p>あなた専用のクローゼットを作るために、ログインまたは登録をお願いします。</p>
     <button id="btn-google-login" class="auth-btn-google">
       <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="G" style="width:18px;">
