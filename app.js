@@ -461,13 +461,18 @@ async function fetchFirebaseData() {
 function updateWeeklyReasons() {
     weeklyOutfits.forEach(outfit => {
         const ev = calendarEvents[outfit.isoDate];
+        const styleTxt = outfit.tags.join('・'); // 季節は含めない（スタイルのみ）
         if (ev) {
             const es = getEventStyle(ev);
             outfit.reason = es
                 ? `📅 予定「${ev}」に合わせた${es.label}コーデ。気温(${outfit.temp})も考慮しています。`
-                : `📅 予定「${ev}」と気温(${outfit.temp})に合わせて、${outfit.tags.join('・')}なコーデを提案します！`;
+                : (styleTxt
+                    ? `📅 予定「${ev}」と気温(${outfit.temp})に合わせて、${styleTxt}なコーデを提案します！`
+                    : `📅 予定「${ev}」と気温(${outfit.temp})に合わせたコーデを提案します！`);
         } else {
-            outfit.reason = `気温(${outfit.temp})に最適な${outfit.tags.join('・')}なコーデを選びました！`;
+            outfit.reason = styleTxt
+                ? `気温(${outfit.temp})に最適な${styleTxt}なコーデを選びました！`
+                : `気温(${outfit.temp})に合わせたコーデを選びました！`;
         }
     });
     if (currentRoute === 'home') navigate('home');
@@ -859,10 +864,9 @@ function generateWeeklyOutfitsFromCloset() {
             outfit.image        = op.image;
             outfit.topsImage    = op.image;
             outfit.bottomsImage = null;
-            outfit.tags  = [...new Set([
-                ...(op.styles  || []).map(s => s.replace('系', '')),
-                ...(op.seasons || [])
-            ])].slice(0, 3);
+            outfit.tags  = [...new Set(
+                (op.styles || []).map(s => s.replace('系', ''))
+            )].slice(0, 3); // 季節は季節外れに見えるのでタグに含めない
             outfit.reason = `${weather ? weather + 'に合わせた' : ''}あなたの「${op.subCategory || op.category || 'ワンピース'}」コーデです。`;
             prevOpId = op.id;
         } else if (topsCandidates.length > 0) {
@@ -876,7 +880,7 @@ function generateWeeklyOutfitsFromCloset() {
                 ...(t.styles || []).map(s => s.replace('系', '')),
                 ...(b ? (b.styles || []).map(s => s.replace('系', '')) : [])
             ])].slice(0, 2);
-            outfit.tags = [...styleTags, ...(t.seasons || []).slice(0, 1)];
+            outfit.tags = styleTags; // 季節は含めない（季節外れ表示を防ぐ）
             outfit.reason = b
                 ? `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」×「${b.subCategory || b.category}」コーデです。`
                 : `${weather ? weather + 'に合わせた' : ''}あなたの「${t.subCategory || t.category}」を使ったコーデです。`;
@@ -1609,7 +1613,7 @@ const routes = {
                             <h4 class="mb-4">${outfit.isFromHistory ? '📅 ' : ''}${outfit.title}</h4>
                             <div style="display:flex; flex-wrap:wrap; gap:4px;">${outfit.tags.map(tag => `<span class="tag-small">${tag}</span>`).join('')}</div>
                             ${outfit.outerImage ? `<div style="margin-top:6px;"><span class="tag-small" style="background:var(--accent-color); color:#fff;">🧥 ${outfit.outerName || 'アウター'}</span></div>` : ''}
-                            <p class="mt-4" style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4;">
+                            <p class="mt-4" style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.7; word-break: auto-phrase; line-break: strict; overflow-wrap: anywhere;">
                                 <i data-lucide="sparkles" class="inline-icon" style="color: var(--accent-color);"></i>
                                 ${outfit.reason}
                             </p>
@@ -2186,7 +2190,7 @@ window.openOutfitDetails = function(index) {
             <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
                 ${outfit.tags.map(t => `<span class="tag">${t}</span>`).join('')}
             </div>
-            <p style="font-size:0.9rem; color:var(--text-secondary); line-height:1.6; margin-bottom:16px;">
+            <p style="font-size:0.9rem; color:var(--text-secondary); line-height:1.7; margin-bottom:16px; word-break:auto-phrase; line-break:strict; overflow-wrap:anywhere;">
                 <i data-lucide="sparkles" class="inline-icon" style="color:var(--accent-color);"></i>
                 ${outfit.reason}
             </p>
