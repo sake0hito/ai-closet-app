@@ -3087,6 +3087,9 @@ function renderCoordRoom() {
         <div class="coord-slots" style="margin-bottom:12px;">
             ${slotBtn('小物を選ぶ（任意）', 'accessory', coordState.accessory, "openCoordPicker('小物')", 'accessory')}
         </div>
+        <button onclick="showCoordPreview()" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
+            👕 コーデの見え方を見る
+        </button>
         <button onclick="analyzeCoordination()" style="width:100%; background:var(--primary-color); color:white; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-bottom:8px;">
             <i data-lucide="sparkles" class="inline-icon"></i> AIで分析する
         </button>`;
@@ -3111,6 +3114,45 @@ window.setCoordType = function(type) {
 window.resetCoord = function() {
     coordState = { type: null, tops: null, bottoms: null, shoes: null, hat: null, accessory: null };
     refreshCoordRoom();
+};
+
+// コーデの「見え方」プレビュー（本格的な試着ではなく、選んだ服を上から順に並べた見え方確認。AI・課金なし）
+window.showCoordPreview = function() {
+    const cs = coordState;
+    const isOne = cs.type === 'onepiece';
+    // 着る順（上→下）に並べる：帽子→トップス/ワンピース→ボトムス→靴。小物は別枠で表示。
+    const rows = [];
+    if (cs.hat)   rows.push({ img: cs.hat.image,   label: cs.hat.subCategory   || '帽子',   w: 74 });
+    if (cs.tops)  rows.push({ img: cs.tops.image,  label: cs.tops.subCategory  || (isOne ? 'ワンピース' : 'トップス'), w: 150 });
+    if (!isOne && cs.bottoms) rows.push({ img: cs.bottoms.image, label: cs.bottoms.subCategory || 'ボトムス', w: 140 });
+    if (cs.shoes) rows.push({ img: cs.shoes.image, label: cs.shoes.subCategory || '靴', w: 92 });
+
+    const board = rows.map(r => `
+        <div style="text-align:center;">
+            <img src="${r.img}" style="width:${r.w}px; max-width:72%; aspect-ratio:1/1.05; object-fit:cover; border-radius:12px; box-shadow:0 3px 10px rgba(0,0,0,0.12);" alt="">
+            <p style="font-size:0.7rem; color:var(--text-secondary); margin:4px 0 0;">${r.label}</p>
+        </div>`).join('<div style="height:10px;"></div>');
+
+    const acc = cs.accessory ? `
+        <div style="margin-top:12px; display:flex; align-items:center; gap:8px; justify-content:center;">
+            <img src="${cs.accessory.image}" style="width:48px; height:48px; object-fit:cover; border-radius:10px;" alt="">
+            <span style="font-size:0.72rem; color:var(--text-secondary);">＋ ${cs.accessory.subCategory || '小物'}（合わせる）</span>
+        </div>` : '';
+
+    const empty = rows.length === 0;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:85vh; overflow-y:auto;">
+            <h3 class="section-title">👕 コーデの見え方</h3>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:14px; line-height:1.6;">選んだアイテムを上から順に並べた“見え方”プレビューです（本格的な試着ではありません。セットの雰囲気を確認する用）。</p>
+            ${empty
+                ? '<p style="color:var(--text-secondary); font-size:0.88rem;">先にトップス（またはワンピース）などを選んでください。</p>'
+                : `<div style="background:linear-gradient(180deg,#f3f7fb,#e7eef7); border-radius:16px; padding:20px 12px; display:flex; flex-direction:column; align-items:center;">${board}${acc}</div>`}
+            <button onclick="openCoordRoomModal()" class="btn-outline text-center mt-4">戻る</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', () => openCoordRoomModal());
 };
 
 window.selectForCoord = function(id) {
