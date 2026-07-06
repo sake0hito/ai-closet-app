@@ -7,6 +7,13 @@
     --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1); --border-radius-lg: 24px;
     --border-radius-md: 16px; --border-radius-sm: 8px; --glass-border: 1px solid rgba(255,255,255,0.4);
 }
+/* 日本語をアプリ全体で読みやすく折り返す（語の途中で改行せず、文節で折る）。
+   未対応ブラウザは自動で通常の折り返しに戻るので安全。 */
+body {
+    line-break: strict;
+    word-break: auto-phrase;
+    overflow-wrap: anywhere;
+}
 body.theme-night {
     --bg-color: #0f172a; --surface-color: rgba(30, 41, 59, 0.85); --surface-solid: #1e293b;
     --text-primary: #f8fafc; --text-secondary: #94a3b8; --primary-color: #818cf8;

@@ -3239,24 +3239,26 @@ function renderHistoryList() {
             : '';
 
         html += `
-        <div style="display:flex; gap:10px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px; align-items:center;">
-            <div style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
-            <div style="flex:1; min-width:0; cursor:pointer;" onclick="openHistoryDetail('${h.id}')">
-                <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold;">${h.dateStr}</p>
-                <div style="display:flex; align-items:center; flex-wrap:wrap; margin-top:3px;">
-                    <p style="font-size:0.88rem; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:calc(100% - 60px);">${display.title}</p>
-                    ${occasionBadge}
+        <div style="border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                <div style="flex:1; min-width:0; cursor:pointer;" onclick="openHistoryDetail('${h.id}')">
+                    <p style="font-size:0.75rem; color:var(--primary-color); font-weight:bold; margin:0;">${h.dateStr}</p>
+                    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin-top:3px;">
+                        <span style="font-size:0.9rem; font-weight:bold;">${display.title}</span>
+                        ${occasionBadge}
+                    </div>
+                    ${h.memo ? `<p style="font-size:0.78rem; color:var(--text-secondary); margin-top:4px; line-height:1.6;">${h.memo}</p>` : ''}
                 </div>
-                ${h.memo ? `<p style="font-size:0.73rem; color:var(--text-secondary); margin-top:2px;">${h.memo}</p>` : ''}
+                <div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;">
+                    <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer; padding:6px;">
+                        <i data-lucide="pencil" style="width:15px; height:15px;"></i>
+                    </button>
+                    <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:6px;">
+                        <i data-lucide="trash-2" style="width:15px; height:15px;"></i>
+                    </button>
+                </div>
             </div>
-            <div style="display:flex; flex-direction:column; gap:2px; flex-shrink:0;">
-                <button onclick="openHistoryEdit('${h.id}')" style="background:none; border:none; color:var(--primary-color); cursor:pointer; padding:6px;">
-                    <i data-lucide="pencil" style="width:15px; height:15px;"></i>
-                </button>
-                <button onclick="deleteHistoryItem('${h.id}')" style="background:none; border:none; color:#ef4444; cursor:pointer; padding:6px;">
-                    <i data-lucide="trash-2" style="width:15px; height:15px;"></i>
-                </button>
-            </div>
+            <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; cursor:pointer;" onclick="openHistoryDetail('${h.id}')">${thumbsHtml}</div>
         </div>`;
     });
     html += `</div></div>`;
