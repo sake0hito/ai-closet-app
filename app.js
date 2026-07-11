@@ -1285,6 +1285,55 @@ let vtonState = { selfie: null, garment: null };
 let vtonCache = {};
 let vtonBusy = false;
 
+// 自撮り写真の保存ライブラリ（端末内のみ保存＝プライバシー配慮。ゲスト=session/ログイン=local。試着時のみ生成エンジンへ送信）
+function selfieStoreKey() { return 'vton_selfies_' + (userKey() || 'guest'); }
+function getSelfies() {
+    try { return JSON.parse(userStore().getItem(selfieStoreKey()) || '[]'); } catch (e) { return []; }
+}
+function setSelfies(arr) {
+    try { userStore().setItem(selfieStoreKey(), JSON.stringify(arr)); } catch (e) {}
+}
+function saveSelfie(dataUrl) {
+    if (!dataUrl) return;
+    const arr = getSelfies();
+    if (arr.some(s => s.image === dataUrl)) return; // 同じ画像は重複保存しない
+    arr.unshift({ id: 'sf' + Date.now(), image: dataUrl });
+    setSelfies(arr.slice(0, 6)); // 最新6枚まで保持（保存容量の節約）
+}
+window.useSavedSelfie = function(id) {
+    const s = getSelfies().find(x => x.id === id);
+    if (s) vtonState.selfie = s.image;
+    openVtonModal();
+};
+window.deleteSavedSelfie = function(id) {
+    setSelfies(getSelfies().filter(x => x.id !== id));
+    openSelfiePicker(); // 再描画
+};
+// 保存済み自撮りの呼び出しモーダル（＋端末の写真からも追加できる）
+window.openSelfiePicker = function() {
+    const arr = getSelfies();
+    const grid = arr.length === 0
+        ? '<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:16px 0; line-height:1.7;">保存された自撮りはまだありません。<br>下の「端末の写真から選ぶ」か、前の画面の「📷 自撮り」で追加できます。</p>'
+        : `<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">${arr.map(s => `
+            <div style="position:relative;">
+                <img src="${s.image}" onclick="useSavedSelfie('${s.id}')" style="width:100%; aspect-ratio:3/4; object-fit:cover; border-radius:10px; cursor:pointer;" alt="">
+                <button onclick="deleteSavedSelfie('${s.id}')" aria-label="削除" style="position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%; background:#ef4444; color:#fff; border:2px solid var(--surface-solid); font-size:12px; line-height:1; padding:0; cursor:pointer;">✕</button>
+            </div>`).join('')}</div>`;
+    modalContainer.innerHTML = `
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
+            <h3 class="section-title">🖼 保存した自撮りから選ぶ</h3>
+            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:12px; line-height:1.6;">タップで使用／✕で削除。写真は<strong>この端末内だけ</strong>に保存されます（試着する時だけ生成エンジンに送信）。</p>
+            ${grid}
+            <input type="file" id="vton-selfie-file" accept="image/*" class="hidden" onchange="onVtonSelfie(this)">
+            <button onclick="document.getElementById('vton-selfie-file').click()" style="width:100%; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); border-radius:10px; padding:10px; font-size:0.85rem; font-weight:bold; cursor:pointer; margin-top:14px;">📁 端末の写真から選ぶ</button>
+            <button onclick="openVtonModal()" class="btn-outline text-center mt-4">戻る</button>
+        </div>`;
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+    document.querySelector('.modal-overlay').addEventListener('click', () => openVtonModal());
+};
+
 window.openVtonModal = function() { renderVtonModal(); };
 
 function renderVtonModal(resultImg) {
@@ -1309,6 +1358,7 @@ function renderVtonModal(resultImg) {
                 <div style="text-align:center;">
                     ${selfieBox}
                     <button onclick="document.getElementById('vton-selfie-input').click()" style="display:block; margin:8px auto 0; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); border-radius:10px; padding:6px 10px; font-size:0.75rem; cursor:pointer;">📷 自撮り</button>
+                    <button onclick="openSelfiePicker()" style="display:block; margin:6px auto 0; background:transparent; color:var(--primary-color); border:1px solid var(--primary-color); border-radius:10px; padding:5px 10px; font-size:0.72rem; cursor:pointer;">🖼 呼び出し</button>
                 </div>
                 <div style="align-self:center; font-size:1.4rem; color:var(--text-secondary);">＋</div>
                 <div style="text-align:center;">
@@ -1333,7 +1383,7 @@ window.onVtonSelfie = function(input) {
     const file = input.files && input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (ev) => { vtonState.selfie = await compressImage(ev.target.result); renderVtonModal(); };
+    reader.onload = async (ev) => { const img = await compressImage(ev.target.result); vtonState.selfie = img; saveSelfie(img); renderVtonModal(); };
     reader.readAsDataURL(file);
 };
 
