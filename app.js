@@ -1285,6 +1285,20 @@ let vtonState = { selfie: null, garment: null };
 let vtonCache = {};
 let vtonBusy = false;
 
+// 服のタグ（色＋種類）から英語の説明文を作り、VTONエンジンに渡して精度を上げる（CLIPテキストは英語が効きやすい）
+const VTON_COLOR_EN = { '赤':'red','青':'blue','黄':'yellow','緑':'green','むらさき':'purple','ピンク':'pink','オレンジ':'orange','ベージュ':'beige','グレー':'gray','黒':'black','白':'white' };
+const VTON_SUB_EN = {
+    'カットソー':'top','Tシャツ':'t-shirt','ロゴTシャツ':'printed t-shirt','タンクトップ':'tank top','シャツ':'shirt','柄シャツ':'patterned shirt','ブラウス':'blouse','スウェット':'sweatshirt','パーカ':'hoodie','ニット/セーター':'knit sweater',
+    'ジャケット':'jacket','ブルゾン':'blouson jacket','コート':'coat','トレンチコート':'trench coat','ダウンジャケット':'down jacket','レザージャケット':'leather jacket','デニムジャケット':'denim jacket','マウンテンパーカ':'mountain parka','カーディガン':'cardigan','ジレ・ベスト':'vest'
+};
+const VTON_CAT_EN = { 'トップス':'top','アウター':'jacket','ワンピース':'dress','ドレス':'dress','ボトムス':'pants','スーツ':'suit','靴':'shoes','帽子':'hat','小物':'accessory' };
+function vtonGarmentDesc(item) {
+    if (!item) return 'clothing';
+    const color = (item.colors && item.colors[0]) ? (VTON_COLOR_EN[item.colors[0]] || '') : '';
+    const noun = (item.subCategory && VTON_SUB_EN[item.subCategory]) || VTON_CAT_EN[item.category] || 'clothing';
+    return (color ? color + ' ' : '') + noun;
+}
+
 // 自撮り写真の保存ライブラリ（端末内のみ保存＝プライバシー配慮。ゲスト=session/ログイン=local。試着時のみ生成エンジンへ送信）
 function selfieStoreKey() { return 'vton_selfies_' + (userKey() || 'guest'); }
 function getSelfies() {
@@ -1366,6 +1380,7 @@ function renderVtonModal(resultImg) {
                     <button onclick="openVtonGarmentPicker()" style="display:block; margin:8px auto 0; background:var(--surface-solid); color:var(--accent-color); border:2px solid var(--accent-color); border-radius:10px; padding:6px 10px; font-size:0.75rem; cursor:pointer;">👕 服を選ぶ</button>
                 </div>
             </div>
+            <p style="font-size:0.72rem; color:var(--text-secondary); text-align:center; margin-top:10px; line-height:1.6;">💡 コツ：<strong>全身・正面・無地の背景</strong>の自撮りだと綺麗に出ます。服はトップスが最も得意です。</p>
             <input type="file" id="vton-selfie-input" accept="image/*" capture="user" class="hidden" onchange="onVtonSelfie(this)">
             <button onclick="runVton()" ${canRun ? '' : 'disabled'} style="width:100%; background:${canRun ? 'var(--primary-color)' : '#cbd5e1'}; color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:${canRun ? 'pointer' : 'not-allowed'}; margin-top:14px;">
                 ${vtonBusy ? '生成中…（30秒ほどかかることがあります）' : '👗 試着する（生成）'}
@@ -1420,7 +1435,7 @@ window.runVton = async function() {
         const res = await fetch(VTON_WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ person: vtonState.selfie, garment: vtonState.garment.image })
+            body: JSON.stringify({ person: vtonState.selfie, garment: vtonState.garment.image, desc: vtonGarmentDesc(vtonState.garment) })
         });
         const data = await res.json().catch(() => ({}));
         vtonBusy = false;
