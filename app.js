@@ -26,7 +26,7 @@ const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.goo
 // Cloudflare Workers プロキシ URL
 const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 // マネキン試着（VTON・評価版）用の別Worker。※本番のWORKER_URLとは別に用意する（未設定だと試着は「準備中」表示）。
-const VTON_WORKER_URL = 'https://REPLACE-WITH-YOUR-VTON-WORKER.workers.dev';
+const VTON_WORKER_URL = 'https://digi-set-vton.liyuandagui80.workers.dev';
 
 const CATEGORIES = {
     "トップス": ["カットソー", "Tシャツ", "ロゴTシャツ", "タンクトップ", "シャツ", "柄シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
