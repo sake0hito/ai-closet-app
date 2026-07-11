@@ -1281,9 +1281,17 @@ ${gender ? `【対象】${gender}向けのアイテムにすること。` : ''}
 };
 
 // ===== マネキン試着（VTON・評価版）。自撮りに服を着せ替え。HF無料エンジンを別Worker経由で使用 =====
-let vtonState = { selfie: null, garment: null };
+let vtonState = { selfie: null, upper: null, lower: null, overall: null };
 let vtonCache = {};
 let vtonBusy = false;
+let vtonProgress = '';
+// 着せる服のスロット（カテゴリ→cloth_type）。靴/帽子/小物は試着対象外。
+const VTON_SLOTS = {
+    upper:   { label: 'トップス',   cats: ['トップス', 'アウター', 'スーツ'] },
+    lower:   { label: 'ボトムス',   cats: ['ボトムス'] },
+    overall: { label: 'ワンピース', cats: ['ワンピース', 'ドレス'] }
+};
+const VTON_SLOT_COLOR = { upper: 'var(--accent-color)', lower: '#10b981', overall: '#8b5cf6' };
 
 // 服のタグ（色＋種類）から英語の説明文を作り、VTONエンジンに渡して精度を上げる（CLIPテキストは英語が効きやすい）
 const VTON_COLOR_EN = { '赤':'red','青':'blue','黄':'yellow','緑':'green','むらさき':'purple','ピンク':'pink','オレンジ':'orange','ベージュ':'beige','グレー':'gray','黒':'black','白':'white' };
@@ -1350,43 +1358,57 @@ window.openSelfiePicker = function() {
 
 window.openVtonModal = function() { renderVtonModal(); };
 
+// 着せる服スロット1枠分のHTML（選択済みなら画像＋✕、未選択なら＋枠）
+function vtonSlotBox(key) {
+    const s = VTON_SLOTS[key]; const it = vtonState[key]; const col = VTON_SLOT_COLOR[key];
+    const inner = it
+        ? `<div style="position:relative;"><img src="${it.image}" style="width:88px; height:110px; object-fit:cover; border-radius:10px;" alt="">
+             <button onclick="clearVtonSlot('${key}')" aria-label="外す" style="position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; background:#ef4444; color:#fff; border:2px solid var(--surface-solid); font-size:11px; line-height:1; padding:0; cursor:pointer;">✕</button></div>`
+        : `<div onclick="openVtonGarmentPicker('${key}')" style="width:88px; height:110px; border:2px dashed ${col}; border-radius:10px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:${col}; font-size:0.72rem; text-align:center; cursor:pointer; line-height:1.4;"><span style="font-size:1.1rem;">＋</span>${s.label}</div>`;
+    return `<div style="text-align:center;">${inner}
+        <button onclick="openVtonGarmentPicker('${key}')" style="display:block; margin:5px auto 0; background:transparent; color:${col}; border:1px solid ${col}; border-radius:8px; padding:3px 8px; font-size:0.68rem; cursor:pointer;">${it ? '変更' : '選ぶ'}</button></div>`;
+}
+
 function renderVtonModal(resultImg) {
     const configured = !VTON_WORKER_URL.includes('REPLACE-WITH');
-    const g = vtonState.garment;
     const selfieBox = vtonState.selfie
         ? `<img src="${vtonState.selfie}" style="width:120px; height:150px; object-fit:cover; border-radius:12px;">`
         : `<div style="width:120px; height:150px; border:2px dashed var(--primary-color); border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--primary-color); font-size:0.8rem; text-align:center;">自撮りを<br>入れる</div>`;
-    const garmentBox = g
-        ? `<img src="${g.image}" style="width:120px; height:150px; object-fit:cover; border-radius:12px;">`
-        : `<div style="width:120px; height:150px; border:2px dashed var(--accent-color); border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--accent-color); font-size:0.8rem; text-align:center;">着せる服を<br>選ぶ</div>`;
-    const canRun = vtonState.selfie && vtonState.garment && configured && !vtonBusy;
+    const hasGarment = vtonState.overall || vtonState.upper || vtonState.lower;
+    const canRun = vtonState.selfie && hasGarment && configured && !vtonBusy;
+    const comboNote = vtonState.overall && (vtonState.upper || vtonState.lower)
+        ? '<p style="font-size:0.7rem; color:#f59e0b; text-align:center; margin-top:6px;">※ワンピースを選んでいるので、トップス／ボトムスは無視されます。</p>' : '';
+    const twoStage = !vtonState.overall && vtonState.upper && vtonState.lower;
+    const btnLabel = vtonBusy ? (vtonProgress || '生成中…') : (twoStage ? '👗 試着する（2着・最大2分）' : '👗 試着する（生成）');
     const resultHtml = resultImg
-        ? `<div style="margin-top:14px; text-align:center;"><p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">試着イメージ（評価版・ラフ）</p><img src="${resultImg}" style="width:100%; max-width:280px; border-radius:12px;"></div>`
+        ? `<div style="margin-top:14px; text-align:center;"><p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">試着イメージ（評価版）</p><img src="${resultImg}" style="width:100%; max-width:280px; border-radius:12px;"></div>`
         : '';
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
             <h3 class="section-title">🧍 マネキン試着（β・評価版）</h3>
-            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:14px; line-height:1.6;">自分の自撮り写真に、選んだ服を着せ替えて見え方を試します。${configured ? '' : '<br><strong>※このエンジンは現在準備中です（VTON Worker を設定すると使えます）。</strong>'}</p>
-            <div style="display:flex; gap:12px; justify-content:center; align-items:flex-start;">
-                <div style="text-align:center;">
-                    ${selfieBox}
-                    <button onclick="document.getElementById('vton-selfie-input').click()" style="display:block; margin:8px auto 0; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); border-radius:10px; padding:6px 10px; font-size:0.75rem; cursor:pointer;">📷 自撮り</button>
-                    <button onclick="openSelfiePicker()" style="display:block; margin:6px auto 0; background:transparent; color:var(--primary-color); border:1px solid var(--primary-color); border-radius:10px; padding:5px 10px; font-size:0.72rem; cursor:pointer;">🖼 呼び出し</button>
-                </div>
-                <div style="align-self:center; font-size:1.4rem; color:var(--text-secondary);">＋</div>
-                <div style="text-align:center;">
-                    ${garmentBox}
-                    <button onclick="openVtonGarmentPicker()" style="display:block; margin:8px auto 0; background:var(--surface-solid); color:var(--accent-color); border:2px solid var(--accent-color); border-radius:10px; padding:6px 10px; font-size:0.75rem; cursor:pointer;">👕 服を選ぶ</button>
+            <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px; line-height:1.6;">自撮り写真に、選んだ服を着せ替えて見え方を試します。トップス＋ボトムスの<strong>組み合わせ</strong>や<strong>ワンピース</strong>もOK。${configured ? '' : '<br><strong>※このエンジンは現在準備中です（VTON Worker を設定すると使えます）。</strong>'}</p>
+            <div style="text-align:center; margin-bottom:14px;">
+                ${selfieBox}
+                <div>
+                    <button onclick="document.getElementById('vton-selfie-input').click()" style="display:inline-block; margin:8px 4px 0; background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); border-radius:10px; padding:6px 10px; font-size:0.75rem; cursor:pointer;">📷 自撮り</button>
+                    <button onclick="openSelfiePicker()" style="display:inline-block; margin:8px 4px 0; background:transparent; color:var(--primary-color); border:1px solid var(--primary-color); border-radius:10px; padding:6px 10px; font-size:0.72rem; cursor:pointer;">🖼 呼び出し</button>
                 </div>
             </div>
-            <p style="font-size:0.72rem; color:var(--text-secondary); text-align:center; margin-top:10px; line-height:1.6;">💡 コツ：<strong>全身・正面・無地の背景</strong>の自撮りだと綺麗に出ます。服はトップスが最も得意です。</p>
+            <p style="font-size:0.78rem; font-weight:bold; color:var(--text-secondary); margin-bottom:8px;">着せる服（複数OK）</p>
+            <div style="display:flex; gap:10px; justify-content:center; align-items:flex-start;">
+                ${vtonSlotBox('upper')}
+                ${vtonSlotBox('lower')}
+                ${vtonSlotBox('overall')}
+            </div>
+            ${comboNote}
+            <p style="font-size:0.72rem; color:var(--text-secondary); text-align:center; margin-top:10px; line-height:1.6;">💡 コツ：<strong>全身・正面・無地の背景</strong>の自撮りだと綺麗に出ます。</p>
             <input type="file" id="vton-selfie-input" accept="image/*" capture="user" class="hidden" onchange="onVtonSelfie(this)">
             <button onclick="runVton()" ${canRun ? '' : 'disabled'} style="width:100%; background:${canRun ? 'var(--primary-color)' : '#cbd5e1'}; color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:${canRun ? 'pointer' : 'not-allowed'}; margin-top:14px;">
-                ${vtonBusy ? '生成中…（30秒ほどかかることがあります）' : '👗 試着する（生成）'}
+                ${btnLabel}
             </button>
             ${resultHtml}
-            <p style="font-size:0.7rem; color:var(--text-secondary); margin-top:12px; line-height:1.6;">※無料エンジンのため、混雑時は待つ／失敗することがあります（評価用）。うまくいかない時は少し待って再試行してください。</p>
+            <p style="font-size:0.7rem; color:var(--text-secondary); margin-top:12px; line-height:1.6;">※無料エンジンのため、混雑時は待つ／失敗することがあります（評価用）。組み合わせは2回生成するため時間がかかります。</p>
             <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
         </div>`;
     modalContainer.classList.remove('hidden');
@@ -1402,15 +1424,18 @@ window.onVtonSelfie = function(input) {
     reader.readAsDataURL(file);
 };
 
-window.openVtonGarmentPicker = function() {
-    const items = closetItems;
+// スロット別の服ピッカー（そのスロットのカテゴリだけ表示）
+window.openVtonGarmentPicker = function(slot) {
+    slot = (slot && VTON_SLOTS[slot]) ? slot : 'upper';
+    const cats = VTON_SLOTS[slot].cats;
+    const items = closetItems.filter(it => cats.includes(it.category));
     const grid = items.length === 0
-        ? '<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">クローゼットに服がありません。先に服を登録してください。</p>'
-        : `<div class="closet-grid">${items.map(it => `<div class="closet-item" onclick="pickVtonGarment('${it.id}')" style="cursor:pointer;"><img src="${it.image}" alt=""><div class="item-tags"><span class="tag-small">${it.subCategory || it.category}</span></div></div>`).join('')}</div>`;
+        ? `<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">この枠に使える服（${cats.join('・')}）がありません。先に登録してください。</p>`
+        : `<div class="closet-grid">${items.map(it => `<div class="closet-item" onclick="pickVtonGarment('${slot}','${it.id}')" style="cursor:pointer;"><img src="${it.image}" alt=""><div class="item-tags"><span class="tag-small">${it.subCategory || it.category}</span></div></div>`).join('')}</div>`;
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
-            <h3 class="section-title">着せる服を選ぶ</h3>
+            <h3 class="section-title">${VTON_SLOTS[slot].label}を選ぶ</h3>
             <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px;">1着タップで選ぶ→試着画面に戻ります。</p>
             ${grid}
             <button onclick="openVtonModal()" class="btn-outline text-center mt-4">戻る</button>
@@ -1419,30 +1444,54 @@ window.openVtonGarmentPicker = function() {
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', () => openVtonModal());
 };
-window.pickVtonGarment = function(id) {
-    vtonState.garment = closetItems.find(i => i.id === id) || null;
+window.pickVtonGarment = function(slot, id) {
+    if (!VTON_SLOTS[slot]) return;
+    vtonState[slot] = closetItems.find(i => i.id === id) || null;
+    openVtonModal();
+};
+window.clearVtonSlot = function(slot) {
+    if (VTON_SLOTS[slot]) vtonState[slot] = null;
     renderVtonModal();
 };
 
-// VTON生成（別Worker経由）。安全策：連打防止(vtonBusy)・キャッシュ・失敗表示。
+// VTON生成（別Worker経由・CatVTON）。組み合わせは2段階連結（上を着せた結果に下を重ねる）。安全策：連打防止・キャッシュ・進捗・失敗表示。
 window.runVton = async function() {
-    if (vtonBusy || !vtonState.selfie || !vtonState.garment) return;
+    if (vtonBusy || !vtonState.selfie) return;
     if (VTON_WORKER_URL.includes('REPLACE-WITH')) { alert('試着エンジンが未設定です（準備中）。'); return; }
-    const cacheKey = vtonState.garment.id + '|' + vtonState.selfie.length;
+    // 着せる順番：ワンピ優先（全身1回）／なければ 上→下
+    let steps = [];
+    if (vtonState.overall) steps = [{ item: vtonState.overall, type: 'overall', label: 'ワンピース' }];
+    else {
+        if (vtonState.upper) steps.push({ item: vtonState.upper, type: 'upper', label: 'トップス' });
+        if (vtonState.lower) steps.push({ item: vtonState.lower, type: 'lower', label: 'ボトムス' });
+    }
+    if (steps.length === 0) { alert('着せる服を1つ以上選んでください。'); return; }
+    const cacheKey = vtonState.selfie.length + '|' + steps.map(s => s.type + ':' + s.item.id).join('+');
     if (vtonCache[cacheKey]) { renderVtonModal(vtonCache[cacheKey]); return; }
-    vtonBusy = true; renderVtonModal();
+    vtonBusy = true; vtonProgress = ''; renderVtonModal();
+    let personImg = vtonState.selfie;
     try {
-        const res = await fetch(VTON_WORKER_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ person: vtonState.selfie, garment: vtonState.garment.image, desc: vtonGarmentDesc(vtonState.garment) })
-        });
-        const data = await res.json().catch(() => ({}));
-        vtonBusy = false;
-        if (res.ok && data.image) { vtonCache[cacheKey] = data.image; renderVtonModal(data.image); }
-        else { renderVtonModal(); alert((data.error && (data.error.message || data.error)) || '試着の生成に失敗しました。混雑時は少し待って再試行してください。'); }
+        for (let i = 0; i < steps.length; i++) {
+            vtonProgress = `${i + 1}/${steps.length} ${steps[i].label}を着せています…`;
+            renderVtonModal();
+            const res = await fetch(VTON_WORKER_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ person: personImg, garment: steps[i].item.image, clothType: steps[i].type })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!(res.ok && data.image)) {
+                vtonBusy = false; vtonProgress = ''; renderVtonModal();
+                alert((data.error && (data.error.message || data.error)) || '試着の生成に失敗しました。混雑時は少し待って再試行してください。');
+                return;
+            }
+            personImg = data.image; // 次段の人物＝前段の結果
+        }
+        vtonBusy = false; vtonProgress = '';
+        vtonCache[cacheKey] = personImg;
+        renderVtonModal(personImg);
     } catch (e) {
-        vtonBusy = false; renderVtonModal();
+        vtonBusy = false; vtonProgress = ''; renderVtonModal();
         alert('通信に失敗しました。時間をおいて再度お試しください。');
     }
 };
