@@ -27,6 +27,8 @@ const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.goo
 const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 // マネキン試着（VTON・評価版）用の別Worker。※本番のWORKER_URLとは別に用意する（未設定だと試着は「準備中」表示）。
 const VTON_WORKER_URL = 'https://digi-set-vton.liyuandagui80.workers.dev';
+// Worker側でAPP_SECRETを設定した場合は、ここに同じ文字列を入れる（合言葉。完全なセキュリティではないが乱用対策の一環）。
+const VTON_APP_SECRET = '';
 
 const CATEGORIES = {
     "トップス": ["カットソー", "Tシャツ", "ロゴTシャツ", "タンクトップ", "シャツ", "柄シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
@@ -543,7 +545,7 @@ async function fetchWeather() {
         const lat = userLocation?.lat ?? 35.6895;
         const lon = userLocation?.lon ?? 139.6917;
         const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=Asia%2FTokyo`
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=Asia%2FTokyo`
         );
         const data = await response.json();
 
@@ -568,7 +570,10 @@ async function fetchWeather() {
                 if (index < data.daily.time.length) {
                     const w = parseWeather(data.daily.weathercode[index]);
                     const tmax = data.daily.temperature_2m_max[index];
+                    const tmin = data.daily.temperature_2m_min[index];
                     outfit.temp = (tmax == null || isNaN(tmax)) ? '--°C' : `${Math.round(tmax)}°C`;
+                    outfit.tempMax = (tmax == null || isNaN(tmax)) ? '--°C' : `${Math.round(tmax)}°C`;
+                    outfit.tempMin = (tmin == null || isNaN(tmin)) ? '--°C' : `${Math.round(tmin)}°C`;
                     outfit.condition = w.c;
                     outfit.icon = w.i;
                 }
@@ -1292,6 +1297,9 @@ const VTON_SLOTS = {
     overall: { label: 'ワンピース', cats: ['ワンピース', 'ドレス'] }
 };
 const VTON_SLOT_COLOR = { upper: 'var(--accent-color)', lower: '#10b981', overall: '#8b5cf6' };
+const VTON_WEB_KW = { upper: 'シャツ', lower: 'パンツ', overall: 'ワンピース' }; // 楽天検索の初期キーワード
+let vtonPickerSlot = 'upper';   // 服ピッカーの対象スロット
+let vtonPickerTab = 'closet';   // 服ピッカーのタブ: closet | web | upload
 
 // 服のタグ（色＋種類）から英語の説明文を作り、VTONエンジンに渡して精度を上げる（CLIPテキストは英語が効きやすい）
 const VTON_COLOR_EN = { '赤':'red','青':'blue','黄':'yellow','緑':'green','むらさき':'purple','ピンク':'pink','オレンジ':'orange','ベージュ':'beige','グレー':'gray','黒':'black','白':'white' };
@@ -1379,7 +1387,7 @@ function renderVtonModal(resultImg) {
     const comboNote = vtonState.overall && (vtonState.upper || vtonState.lower)
         ? '<p style="font-size:0.7rem; color:#f59e0b; text-align:center; margin-top:6px;">※ワンピースを選んでいるので、トップス／ボトムスは無視されます。</p>' : '';
     const twoStage = !vtonState.overall && vtonState.upper && vtonState.lower;
-    const btnLabel = vtonBusy ? (vtonProgress || '生成中…') : (twoStage ? '👗 試着する（2着・最大2分）' : '👗 試着する（生成）');
+    const btnLabel = vtonBusy ? (vtonProgress || '生成中…') : (twoStage ? '👗 試着する（2着・少し長め）' : '👗 試着する（生成）');
     const resultHtml = resultImg
         ? `<div style="margin-top:14px; text-align:center;"><p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px;">試着イメージ（評価版）</p><img src="${resultImg}" style="width:100%; max-width:280px; border-radius:12px;"></div>`
         : '';
@@ -1395,7 +1403,7 @@ function renderVtonModal(resultImg) {
                     <button onclick="openSelfiePicker()" style="display:inline-block; margin:8px 4px 0; background:transparent; color:var(--primary-color); border:1px solid var(--primary-color); border-radius:10px; padding:6px 10px; font-size:0.72rem; cursor:pointer;">🖼 呼び出し</button>
                 </div>
             </div>
-            <p style="font-size:0.78rem; font-weight:bold; color:var(--text-secondary); margin-bottom:8px;">着せる服（複数OK）</p>
+            <p style="font-size:0.78rem; font-weight:bold; color:var(--text-secondary); margin-bottom:8px;">着せる服（手持ち／ネットの服・複数OK）</p>
             <div style="display:flex; gap:10px; justify-content:center; align-items:flex-start;">
                 ${vtonSlotBox('upper')}
                 ${vtonSlotBox('lower')}
@@ -1408,7 +1416,7 @@ function renderVtonModal(resultImg) {
                 ${btnLabel}
             </button>
             ${resultHtml}
-            <p style="font-size:0.7rem; color:var(--text-secondary); margin-top:12px; line-height:1.6;">※無料エンジンのため、混雑時は待つ／失敗することがあります（評価用）。組み合わせは2回生成するため時間がかかります。</p>
+            <p style="font-size:0.7rem; color:var(--text-secondary); margin-top:12px; line-height:1.6;">※AIによる試着イメージです（評価版）。組み合わせは2回生成するため少し時間がかかります。</p>
             <button onclick="closeModal()" class="btn-outline text-center mt-4">閉じる</button>
         </div>`;
     modalContainer.classList.remove('hidden');
@@ -1424,25 +1432,98 @@ window.onVtonSelfie = function(input) {
     reader.readAsDataURL(file);
 };
 
-// スロット別の服ピッカー（そのスロットのカテゴリだけ表示）
+// スロット別の服ピッカー（手持ち／楽天で探す／画像アップロードの3タブ）
 window.openVtonGarmentPicker = function(slot) {
-    slot = (slot && VTON_SLOTS[slot]) ? slot : 'upper';
-    const cats = VTON_SLOTS[slot].cats;
-    const items = closetItems.filter(it => cats.includes(it.category));
-    const grid = items.length === 0
-        ? `<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">この枠に使える服（${cats.join('・')}）がありません。先に登録してください。</p>`
-        : `<div class="closet-grid">${items.map(it => `<div class="closet-item" onclick="pickVtonGarment('${slot}','${it.id}')" style="cursor:pointer;"><img src="${it.image}" alt=""><div class="item-tags"><span class="tag-small">${it.subCategory || it.category}</span></div></div>`).join('')}</div>`;
+    vtonPickerSlot = (slot && VTON_SLOTS[slot]) ? slot : 'upper';
+    vtonPickerTab = 'closet';
+    renderVtonPicker();
+};
+window.setVtonPickerTab = function(tab) { vtonPickerTab = tab; renderVtonPicker(); };
+
+function renderVtonPicker() {
+    const slot = vtonPickerSlot; const s = VTON_SLOTS[slot]; const tab = vtonPickerTab;
+    const tabBtn = (id, label) => `<button onclick="setVtonPickerTab('${id}')" style="flex:1; padding:8px 4px; font-size:0.75rem; border:none; border-bottom:2px solid ${tab === id ? 'var(--primary-color)' : 'transparent'}; background:transparent; color:${tab === id ? 'var(--primary-color)' : 'var(--text-secondary)'}; font-weight:${tab === id ? 'bold' : 'normal'}; cursor:pointer;">${label}</button>`;
+    let content = '';
+    if (tab === 'closet') {
+        const items = closetItems.filter(it => s.cats.includes(it.category));
+        content = items.length === 0
+            ? `<p style="color:var(--text-secondary); font-size:0.85rem; text-align:center; padding:20px;">この枠に使える手持ちの服（${s.cats.join('・')}）がありません。「楽天で探す」「画像アップ」も使えます。</p>`
+            : `<div class="closet-grid">${items.map(it => `<div class="closet-item" onclick="pickVtonGarment('${slot}','${it.id}')" style="cursor:pointer;"><img src="${it.image}" alt=""><div class="item-tags"><span class="tag-small">${it.subCategory || it.category}</span></div></div>`).join('')}</div>`;
+    } else if (tab === 'web') {
+        content = `
+            <div style="display:flex; gap:6px; margin-bottom:10px;">
+                <input id="vton-web-q" type="text" placeholder="例：白 シャツ" value="${VTON_WEB_KW[slot] || ''}" style="flex:1; padding:8px 10px; border:1px solid rgba(0,0,0,0.15); border-radius:8px; font-size:0.85rem;">
+                <button onclick="vtonWebSearch()" style="background:var(--primary-color); color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:0.8rem; cursor:pointer;">検索</button>
+            </div>
+            <div id="vton-web-results"><p style="font-size:0.78rem; color:var(--text-secondary); text-align:center; padding:14px 0;">キーワードで楽天の服を検索 → タップで着せます。</p></div>`;
+    } else {
+        content = `
+            <div style="text-align:center; padding:14px 0;">
+                <input type="file" id="vton-garment-file" accept="image/*" class="hidden" onchange="onVtonGarmentUpload(this)">
+                <button onclick="document.getElementById('vton-garment-file').click()" style="background:var(--surface-solid); color:var(--primary-color); border:2px solid var(--primary-color); border-radius:10px; padding:10px 16px; font-size:0.85rem; font-weight:bold; cursor:pointer;">📁 服の画像を選ぶ</button>
+                <p style="font-size:0.72rem; color:var(--text-secondary); margin-top:10px; line-height:1.6;">ショッピングサイトのスクショなどでOK。<br>服だけが写った画像が綺麗に出ます。</p>
+            </div>`;
+    }
     modalContainer.innerHTML = `
         <div class="modal-overlay"></div>
         <div class="modal-content" style="max-height:88vh; overflow-y:auto;">
-            <h3 class="section-title">${VTON_SLOTS[slot].label}を選ぶ</h3>
-            <p style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:10px;">1着タップで選ぶ→試着画面に戻ります。</p>
-            ${grid}
+            <h3 class="section-title">${s.label}を選ぶ</h3>
+            <div style="display:flex; border-bottom:1px solid rgba(0,0,0,0.1); margin-bottom:12px;">
+                ${tabBtn('closet', '手持ち')}${tabBtn('web', '楽天で探す')}${tabBtn('upload', '画像アップ')}
+            </div>
+            ${content}
             <button onclick="openVtonModal()" class="btn-outline text-center mt-4">戻る</button>
         </div>`;
     modalContainer.classList.remove('hidden');
     lucide.createIcons();
     document.querySelector('.modal-overlay').addEventListener('click', () => openVtonModal());
+}
+
+// 楽天で服を検索（既存のWorker rakutenSearch を再利用）→ 商品画像をそのまま着せる
+window.vtonWebSearch = async function() {
+    const inp = document.getElementById('vton-web-q');
+    const kw = inp ? inp.value.trim() : '';
+    const box = document.getElementById('vton-web-results');
+    if (!box) return;
+    if (!kw) { box.innerHTML = '<p style="font-size:0.78rem; color:var(--text-secondary); text-align:center;">キーワードを入れてください。</p>'; return; }
+    box.innerHTML = '<p style="font-size:0.8rem; color:var(--text-secondary); text-align:center; padding:14px 0;">🔎 検索中…</p>';
+    try {
+        const res = await fetch(WORKER_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rakutenSearch: { keyword: kw, hits: 12, sort: '-reviewCount' } })
+        });
+        const data = await res.json().catch(() => ({}));
+        const items = (data.Items || []).map(x => x.Item).filter(Boolean);
+        if (items.length === 0) { box.innerHTML = '<p style="font-size:0.8rem; color:var(--text-secondary); text-align:center;">見つかりませんでした。別のキーワードで試してください。</p>'; return; }
+        box.innerHTML = `<div class="closet-grid">${items.map(it => {
+            let img = (it.mediumImageUrls && it.mediumImageUrls[0] && it.mediumImageUrls[0].imageUrl) || (it.smallImageUrls && it.smallImageUrls[0] && it.smallImageUrls[0].imageUrl) || '';
+            img = img.replace(/_ex=\d+x\d+/, '_ex=500x500'); // なるべく大きい画像で精度UP
+            const label = (it.itemName || '商品').slice(0, 40);
+            return img ? `<div class="closet-item" onclick="pickVtonExternal('${encodeURIComponent(img)}','${encodeURIComponent(label)}')" style="cursor:pointer;"><img src="${img}" alt=""><div class="item-tags"><span class="tag-small">楽天</span></div></div>` : '';
+        }).join('')}</div><p style="font-size:0.68rem; color:var(--text-secondary); margin-top:8px;">※楽天市場の商品画像。タップでそのまま着せます。</p>`;
+    } catch (e) {
+        box.innerHTML = '<p style="font-size:0.8rem; color:#ef4444; text-align:center;">検索に失敗しました。少し待って再試行してください。</p>';
+    }
+};
+// 楽天商品/URLの服（＝持っていない服）をスロットにセット
+window.pickVtonExternal = function(encImg, encLabel) {
+    const image = decodeURIComponent(encImg || '');
+    if (!image) return;
+    const label = encLabel ? decodeURIComponent(encLabel) : 'ネットの服';
+    vtonState[vtonPickerSlot] = { id: 'ext_' + image.slice(-24), image: image, label: label, external: true };
+    openVtonModal();
+};
+// アップロードした服画像（＝持っていない服）をスロットにセット
+window.onVtonGarmentUpload = function(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+        const img = await compressImage(ev.target.result);
+        vtonState[vtonPickerSlot] = { id: 'up_' + img.length, image: img, label: 'アップロード画像', external: true };
+        openVtonModal();
+    };
+    reader.readAsDataURL(file);
 };
 window.pickVtonGarment = function(slot, id) {
     if (!VTON_SLOTS[slot]) return;
@@ -1476,7 +1557,10 @@ window.runVton = async function() {
             renderVtonModal();
             const res = await fetch(VTON_WORKER_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(VTON_APP_SECRET ? { 'x-app-secret': VTON_APP_SECRET } : {})
+                },
                 body: JSON.stringify({ person: personImg, garment: steps[i].item.image, clothType: steps[i].type })
             });
             const data = await res.json().catch(() => ({}));
@@ -1788,7 +1872,7 @@ const routes = {
                     <i data-lucide="${todayWeather.icon}" class="weather-icon ${todayWeather.icon === 'loader' ? 'spinner' : ''}" style="width:36px; height:36px;"></i>
                     <div class="weather-info" style="text-align:left;">
                         <h2 style="font-size:1.5rem;">${todayWeather.temp}</h2>
-                        <p style="margin-top:0;">${locationName} / ${todayWeather.condition}</p>
+                        <p style="margin-top:0;">${locationName} / ${todayWeather.condition}${(todayWeather.tempMax && todayWeather.tempMin) ? ` ／ ${todayWeather.tempMax} / ${todayWeather.tempMin}` : ''}</p>
                     </div>
                 </div>
             </div>
@@ -1823,7 +1907,7 @@ const routes = {
                     <div class="card outfit-card" onclick="openOutfitDetails(${index})">
                         <div style="padding:12px; font-weight:bold; border-bottom:1px solid rgba(0,0,0,0.05); display:flex; justify-content:space-between;">
                             <span>${outfit.dateStr}</span>
-                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.temp}</span>
+                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${index === 0 ? `${outfit.temp}（${outfit.tempMax || '--°C'} / ${outfit.tempMin || '--°C'}）` : `${outfit.tempMax || outfit.temp} / ${outfit.tempMin || '--°C'}`}</span>
                         </div>
                         ${calendarEvents[outfit.isoDate] ? `<div style="padding:6px 12px; background:var(--accent-color); color:#fff; font-size:0.78rem; font-weight:600; display:flex; align-items:center; gap:6px;"><i data-lucide="calendar-check" class="inline-icon"></i>予定: ${calendarEvents[outfit.isoDate]}</div>` : ''}
                         ${thumbHtml}
