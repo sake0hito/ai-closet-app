@@ -1872,7 +1872,8 @@ const routes = {
                     <i data-lucide="${todayWeather.icon}" class="weather-icon ${todayWeather.icon === 'loader' ? 'spinner' : ''}" style="width:36px; height:36px;"></i>
                     <div class="weather-info" style="text-align:left;">
                         <h2 style="font-size:1.5rem;">${todayWeather.temp}</h2>
-                        <p style="margin-top:0;">${locationName} / ${todayWeather.condition}${(todayWeather.tempMax && todayWeather.tempMin) ? ` ／ ${todayWeather.tempMax} / ${todayWeather.tempMin}` : ''}</p>
+                        <p style="margin-top:0;">${locationName} / ${todayWeather.condition}</p>
+                        ${(todayWeather.tempMax && todayWeather.tempMin) ? `<p style="margin-top:2px; font-size:0.85rem; color:var(--text-secondary);">${todayWeather.tempMax} / ${todayWeather.tempMin}</p>` : ''}
                     </div>
                 </div>
             </div>
@@ -1907,7 +1908,7 @@ const routes = {
                     <div class="card outfit-card" onclick="openOutfitDetails(${index})">
                         <div style="padding:12px; font-weight:bold; border-bottom:1px solid rgba(0,0,0,0.05); display:flex; justify-content:space-between;">
                             <span>${outfit.dateStr}</span>
-                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${index === 0 ? `${outfit.temp}（${outfit.tempMax || '--°C'} / ${outfit.tempMin || '--°C'}）` : `${outfit.tempMax || outfit.temp} / ${outfit.tempMin || '--°C'}`}</span>
+                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.tempMax || outfit.temp} / ${outfit.tempMin || '--°C'}</span>
                         </div>
                         ${calendarEvents[outfit.isoDate] ? `<div style="padding:6px 12px; background:var(--accent-color); color:#fff; font-size:0.78rem; font-weight:600; display:flex; align-items:center; gap:6px;"><i data-lucide="calendar-check" class="inline-icon"></i>予定: ${calendarEvents[outfit.isoDate]}</div>` : ''}
                         ${thumbHtml}
