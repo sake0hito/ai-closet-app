@@ -736,10 +736,10 @@ async function loadSampleCoords() {
         const res = await fetch(WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rakutenSearch: { keyword: `${season} コーディネート`, hits: 6, sort: '-reviewCount' } })
+            body: JSON.stringify({ rakutenSearch: { keyword: `${season} コーディネート`, hits: 20, sort: '-reviewCount' } })
         });
         const data = await res.json();
-        const items = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+        const items = shuffleArray((data.Items || []).map(x => x.Item).filter(Boolean)).slice(0, 2);
         const cur = document.getElementById('sample-coords');
         if (!cur) return;
         if (items.length === 0) { cur.style.display = 'none'; return; }
@@ -1062,10 +1062,10 @@ ${gender ? `【対象】このユーザーは${gender}の服が中心なので�
                 const res = await fetch(WORKER_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
+                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 8, sort: '-reviewCount' } })
                 });
                 const data = await res.json();
-                rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+                rec.products = shuffleArray((data.Items || []).map(x => x.Item).filter(Boolean)).slice(0, 2);
             } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
         }
         if (recs.length) { recommendCache = recs; recommendCacheKey = recKey; }
@@ -1238,10 +1238,10 @@ ${gender ? `【対象】${gender}向けのアイテムにすること。` : ''}
                 const res = await fetch(WORKER_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 2, sort: '-reviewCount' } })
+                    body: JSON.stringify({ rakutenSearch: { keyword: rec.keyword || rec.item, hits: 8, sort: '-reviewCount' } })
                 });
                 const data = await res.json();
-                rec.products = (data.Items || []).map(x => x.Item).filter(Boolean).slice(0, 2);
+                rec.products = shuffleArray((data.Items || []).map(x => x.Item).filter(Boolean)).slice(0, 2);
             } catch (e) { /* 商品取得失敗は理由だけ表示 */ }
         }
         if (recs.length) { favRecommendCache = recs; favRecommendCacheKey = favKey; }
@@ -1696,10 +1696,10 @@ window.showTrendCoord = async function() {
         const res = await fetch(WORKER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rakutenSearch: { keyword: `${gender ? gender + ' ' : ''}${season} ファッション トレンド`, hits: 8, sort: '-reviewCount' } })
+            body: JSON.stringify({ rakutenSearch: { keyword: `${gender ? gender + ' ' : ''}${season} ファッション トレンド`, hits: 20, sort: '-reviewCount' } })
         });
         const data = await res.json();
-        trendItems = (data.Items || []).map(x => x.Item).filter(Boolean);
+        trendItems = shuffleArray((data.Items || []).map(x => x.Item).filter(Boolean));
     } catch (e) { /* 取得失敗してもAIだけで続行 */ }
 
     // 2) Geminiに「人気傾向＋手持ち服」を渡して着こなし提案（JSON）
@@ -2832,6 +2832,16 @@ function readFileAsDataURL(file) {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// 配列をシャッフル（Fisher-Yates）。楽天の人気順結果をそのまま出すと毎回同じ顔ぶれになるため、
+// 上位N件を多めに取得してここでランダムに並べ替えてから表示する。
+function shuffleArray(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
 
 // 画像を縮小・圧縮（長辺maxSize・JPEG）。容量削減＆アップロード高速化。失敗時は元画像を返す。
 function compressImage(dataUrl, maxSize = 800, quality = 0.7) {
