@@ -27,6 +27,8 @@ const GOOGLE_CLIENT_ID = "129220662304-ep6hsfq62ftri0kcirnv647sbnt0gk73.apps.goo
 const WORKER_URL = 'https://ai-closet-proxy.liyuandagui80.workers.dev';
 // マネキン試着（VTON・評価版）用の別Worker。※本番のWORKER_URLとは別に用意する（未設定だと試着は「準備中」表示）。
 const VTON_WORKER_URL = 'https://digi-set-vton.liyuandagui80.workers.dev';
+// Worker側でAPP_SECRETを設定した場合は、ここに同じ文字列を入れる（合言葉。完全なセキュリティではないが乱用対策の一環）。
+const VTON_APP_SECRET = '';
 
 const CATEGORIES = {
     "トップス": ["カットソー", "Tシャツ", "ロゴTシャツ", "タンクトップ", "シャツ", "柄シャツ", "ブラウス", "スウェット", "パーカ", "ニット/セーター"],
@@ -543,7 +545,7 @@ async function fetchWeather() {
         const lat = userLocation?.lat ?? 35.6895;
         const lon = userLocation?.lon ?? 139.6917;
         const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,weathercode&timezone=Asia%2FTokyo`
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=Asia%2FTokyo`
         );
         const data = await response.json();
 
@@ -568,7 +570,10 @@ async function fetchWeather() {
                 if (index < data.daily.time.length) {
                     const w = parseWeather(data.daily.weathercode[index]);
                     const tmax = data.daily.temperature_2m_max[index];
+                    const tmin = data.daily.temperature_2m_min[index];
                     outfit.temp = (tmax == null || isNaN(tmax)) ? '--°C' : `${Math.round(tmax)}°C`;
+                    outfit.tempMax = (tmax == null || isNaN(tmax)) ? '--°C' : `${Math.round(tmax)}°C`;
+                    outfit.tempMin = (tmin == null || isNaN(tmin)) ? '--°C' : `${Math.round(tmin)}°C`;
                     outfit.condition = w.c;
                     outfit.icon = w.i;
                 }
@@ -1552,7 +1557,10 @@ window.runVton = async function() {
             renderVtonModal();
             const res = await fetch(VTON_WORKER_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(VTON_APP_SECRET ? { 'x-app-secret': VTON_APP_SECRET } : {})
+                },
                 body: JSON.stringify({ person: personImg, garment: steps[i].item.image, clothType: steps[i].type })
             });
             const data = await res.json().catch(() => ({}));
@@ -1865,6 +1873,7 @@ const routes = {
                     <div class="weather-info" style="text-align:left;">
                         <h2 style="font-size:1.5rem;">${todayWeather.temp}</h2>
                         <p style="margin-top:0;">${locationName} / ${todayWeather.condition}</p>
+                        ${(todayWeather.tempMax && todayWeather.tempMin) ? `<p style="margin-top:2px; font-size:0.85rem; color:var(--text-secondary);">${todayWeather.tempMax} / ${todayWeather.tempMin}</p>` : ''}
                     </div>
                 </div>
             </div>
@@ -1899,7 +1908,7 @@ const routes = {
                     <div class="card outfit-card" onclick="openOutfitDetails(${index})">
                         <div style="padding:12px; font-weight:bold; border-bottom:1px solid rgba(0,0,0,0.05); display:flex; justify-content:space-between;">
                             <span>${outfit.dateStr}</span>
-                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.temp}</span>
+                            <span style="color:var(--text-secondary); font-size:0.9rem;"><i data-lucide="${outfit.icon}" class="inline-icon"></i> ${outfit.tempMax || outfit.temp} / ${outfit.tempMin || '--°C'}</span>
                         </div>
                         ${calendarEvents[outfit.isoDate] ? `<div style="padding:6px 12px; background:var(--accent-color); color:#fff; font-size:0.78rem; font-weight:600; display:flex; align-items:center; gap:6px;"><i data-lucide="calendar-check" class="inline-icon"></i>予定: ${calendarEvents[outfit.isoDate]}</div>` : ''}
                         ${thumbHtml}
@@ -1930,6 +1939,9 @@ const routes = {
                         ・ワンピース2着以上<br>
                         ・スーツ2着以上
                     </div>
+                    <button onclick="document.querySelector('[data-target=&quot;closet&quot;]').click()" style="width:100%; background:var(--primary-color); color:#fff; border:none; padding:12px; border-radius:var(--border-radius-md); font-weight:bold; cursor:pointer; margin-top:14px; display:flex; align-items:center; justify-content:center; gap:8px;">
+                        <i data-lucide="shirt" class="inline-icon"></i> クローゼットに服を登録する
+                    </button>
                 </div>
                 <div id="sample-coords" style="margin-bottom:8px;">
                     <p style="font-size:0.82rem; color:var(--text-secondary);"><i data-lucide="loader" class="spinner inline-icon"></i> サンプルコーデを読み込み中...</p>
