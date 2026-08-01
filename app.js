@@ -766,6 +766,12 @@ async function loadSampleCoords() {
 
 // 1週間のコーデ予測を出せる条件：
 //  (上半身[トップス or アウター]≥1 かつ ボトムス≥1 ＝合計2着で1コーデ成立) または ワンピース≥2 または スーツ≥2
+// 現在の季節を返す（春/夏/秋/冬）。コーデ予測の季節フィルターや、トレンド検索のキーワードに使う。
+function getCurrentSeason() {
+    const mo = new Date().getMonth() + 1;
+    return (mo >= 3 && mo <= 5) ? '春' : (mo >= 6 && mo <= 8) ? '夏' : (mo >= 9 && mo <= 11) ? '秋' : '冬';
+}
+
 function canPredictOutfits() {
     let tops = 0, bottoms = 0, onepiece = 0, suit = 0;
     closetItems.forEach(i => {
@@ -790,10 +796,19 @@ function generateWeeklyOutfitsFromCloset() {
     }
 
     // 「トップス・アウター」は旧データ。トップス扱いで後方互換を保つ。スーツはワンピース同様の「一着で完成」枠に含める
-    const tops      = closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター' || i.category === 'アウター');
-    const bottoms   = closetItems.filter(i => i.category === 'ボトムス');
-    const onepieces = closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス' || i.category === 'スーツ');
-    const outers    = closetItems.filter(i => i.category === 'アウター');
+    const curSeason = getCurrentSeason();
+    // 今の季節（または「オールシーズン」）に合う服だけに絞る。該当が1つもないカテゴリは全部から選ぶ（提案自体が消えるより無難）
+    const bySeason = (items) => {
+        const matched = items.filter(i => {
+            const s = i.seasons;
+            return !s || s.length === 0 || s.includes(curSeason) || s.includes('オールシーズン');
+        });
+        return matched.length > 0 ? matched : items;
+    };
+    const tops      = bySeason(closetItems.filter(i => i.category === 'トップス' || i.category === 'トップス・アウター' || i.category === 'アウター'));
+    const bottoms   = bySeason(closetItems.filter(i => i.category === 'ボトムス'));
+    const onepieces = bySeason(closetItems.filter(i => i.category === 'ワンピース' || i.category === 'ドレス' || i.category === 'スーツ'));
+    const outers    = bySeason(closetItems.filter(i => i.category === 'アウター'));
     const coordRules = getCoordRules();
 
     // 直近の着用履歴IDセット（被り回避）：新旧スキーマ対応
@@ -858,11 +873,22 @@ function generateWeeklyOutfitsFromCloset() {
             const m = items.filter(i => (i.styles || []).some(s => eventStyle.styles.includes(s)));
             return m.length > 0 ? m : items; // 該当する服が無ければ通常通り全候補から
         };
+        // 気温（その日の最高・最低の平均）が猛暑・真冬レベルの時だけ、「オールシーズン」より季節がピンポイントな服を優先する。
+        // 平常の気温なら効かせない（季節さえ合っていれば十分）。ユーザーには見せない内部の優先度調整。
+        const preferByTemp = (items) => {
+            if (items.length <= 1) return items;
+            const tMax = parseInt(outfit.tempMax);
+            const tMin = parseInt(outfit.tempMin);
+            const avg = (!isNaN(tMax) && !isNaN(tMin)) ? (tMax + tMin) / 2 : parseInt(outfit.temp);
+            if (isNaN(avg) || (avg < 28 && avg > 8)) return items;
+            const specific = items.filter(i => (i.seasons || []).some(s => s !== 'オールシーズン'));
+            return specific.length > 0 ? specific : items;
+        };
 
-        // クローゼットベースのコーデ生成
-        const opCandidates    = prefer(onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id)));
-        const topsCandidates  = prefer(tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id)));
-        const bottomsCandidates = prefer(bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id)));
+        // クローゼットベースのコーデ生成（優先順位：季節→気温→天気。天気はこの下のアウター判定で反映）
+        const opCandidates    = preferByTemp(prefer(onepieces.filter(i => i.id !== prevOpId && !recentIds.has(i.id))));
+        const topsCandidates  = preferByTemp(prefer(tops.filter(i => i.id !== prevTopsId && !recentIds.has(i.id))));
+        const bottomsCandidates = preferByTemp(prefer(bottoms.filter(i => i.id !== prevBottomsId && !recentIds.has(i.id))));
 
         const useOnepiece = opCandidates.length > 0 && (topsCandidates.length === 0 || Math.random() < 0.25);
 
