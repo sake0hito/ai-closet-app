@@ -3256,6 +3256,14 @@ window.toggleFormMulti = function(group, val) {
             if (aiIdx !== -1) { arr.splice(aiIdx, 1); setActive('オールシーズン', false); }
             arr.push(val);
             setActive(val, true);
+            // 春夏秋冬が全部揃ったら「オールシーズン」1つにまとめる
+            const FOUR = ['春', '夏', '秋', '冬'];
+            if (FOUR.every(s => arr.includes(s))) {
+                currentEditData.seasons = ['オールシーズン'];
+                document.querySelectorAll('[data-group="seasons"]').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.val === 'オールシーズン');
+                });
+            }
         } else {
             arr.splice(arr.indexOf(val), 1);
             setActive(val, false);
