@@ -3231,6 +3231,38 @@ window.toggleSizeChart = function() {
 window.toggleFormMulti = function(group, val) {
     if (!currentEditData[group]) currentEditData[group] = [];
     const arr = currentEditData[group];
+
+    // 季節だけは特別扱い：「オールシーズン」と個別の季節は同時に選べないようにする
+    if (group === 'seasons') {
+        const turningOn = !arr.includes(val);
+        const setActive = (v, active) => {
+            const btn = document.querySelector(`[data-group="seasons"][data-val="${v}"]`);
+            if (btn) btn.classList.toggle('active', active);
+        };
+        if (val === 'オールシーズン') {
+            if (turningOn) {
+                // オールシーズンを選んだら他の季節は全部解除
+                currentEditData.seasons = ['オールシーズン'];
+                document.querySelectorAll('[data-group="seasons"]').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.val === 'オールシーズン');
+                });
+            } else {
+                arr.splice(arr.indexOf(val), 1);
+                setActive(val, false);
+            }
+        } else if (turningOn) {
+            // 個別の季節を選んだらオールシーズンは解除
+            const aiIdx = arr.indexOf('オールシーズン');
+            if (aiIdx !== -1) { arr.splice(aiIdx, 1); setActive('オールシーズン', false); }
+            arr.push(val);
+            setActive(val, true);
+        } else {
+            arr.splice(arr.indexOf(val), 1);
+            setActive(val, false);
+        }
+        return;
+    }
+
     if (arr.includes(val)) arr.splice(arr.indexOf(val), 1);
     else arr.push(val);
     // クリックされたボタンのactive状態だけ更新
